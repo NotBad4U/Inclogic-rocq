@@ -578,6 +578,14 @@ Proof.
     rewrite IHEXEC2, IHEXEC1. reflexivity.
 Qed.
 
+(** Syntactically, an assertion [P] is independent from a set [vars] of
+    variables if none of the variables in [vars] is mentioned in [P].
+    With out encoding of assertions as predicates [store -> Prop],
+    we cannot state the independence condition like this, since
+    the predicates are opaque functions.
+    Instead, we will say that the assertion has the same truth value
+    in any two stores [s1] and [s2] that differ only on the values of
+    the variables in set [vars]. *)
 Definition independent_of (P: assertion) (vars: ident -> Prop) : Prop :=
   forall (s1 s2 : store),
   (forall x, ~ vars x -> s1 x = s2 x) ->

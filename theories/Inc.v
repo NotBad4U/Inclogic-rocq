@@ -1,6 +1,6 @@
 (** * Mechanized Incorrectness Logic
 
-  Implementation of the Incorrectness Logic of O'Hearn [1].
+  Implementation of the Incorrectness Logic of O'Hearn [[1]].
 
   Sound over-approximation methods have been proved effective for guaranteeing the absence of errors, but inevitably they produce false alarms that can hamper the programmers.
   Conversely, under-approximation methods are aimed at bug finding and are free from false alarms.
@@ -32,7 +32,7 @@
     condition [vcond] discharging the loop invariants, and a verification-condition generator
     [vcgen] shown correct by [vcgen_sound].
 
-  [1] Peter W. O'Hearn. 2019. Incorrectness logic. Proc. ACM Program. Lang. 4, POPL,
+  [[1]] Peter W. O'Hearn. 2019. Incorrectness logic. Proc. ACM Program. Lang. 4, POPL,
   Article 10 (January 2020), 32 pages. https://doi.org/10.1145/3371078
 *)
 
@@ -53,6 +53,62 @@ Reserved Notation "⟦ P ⟧ c ⟦ 'err' ↑ Q ⟧" (at level 90, c at next leve
 
 Definition ffalse : assertion := fun _ => False.
 
+(** * Conditions on free and modified variables
+
+- O'Hearn defines Mod(C) syntactically, as "the set of variables modified by
+  assignment statements in [C]" (IL §4, p.10:9); [modified_by] (in [Hoare.v]) mirrors this
+  directly as a structural recursion over [com].
+- Every [Free(-)] side condition, by contrast, is treated semantically,
+  following the paper's definition of freeness as invariance under changing
+  a variable (§4): [not_free]/[independent_of] plays that role for
+  assertions, [aexp_indep] for expressions, and [cexec_indep] for commands.
+  A compound condition such as "y ∉ Free(p,C,q)" or
+  "(Free(e) ∪ {x}) ∩ Free(C) = ∅" is never computed as an actual variable
+  set. It is unfolded argument by argument into a conjunction of these
+  predicates, one per object mentioned (e.g. [not_free y P], [not_free y Q]
+  and [cexec_indep c y] for "y ∉ Free(p,C,q)"). *)
+
+(** Syntactic substitution [[e/x]] on arithmetic expressions. *)
+Fixpoint asubst (x: ident) (e: aexp) (a: aexp) : aexp :=
+  match a with
+  | CONST n     => CONST n
+  | VAR y       => if string_dec x y then e else VAR y
+  | PLUS  a1 a2 => PLUS  (asubst x e a1) (asubst x e a2)
+  | MINUS a1 a2 => MINUS (asubst x e a1) (asubst x e a2)
+  end.
+
+(** [not_free x P] denotes that [P] is invariant under changing [x]:
+    "∀ σ v, σ ∈ P ⇔ (σ | x ↦ v) ∈ P" ([1] §4, p.10:7), i.e. [P] is
+    independent of [x].
+
+    Unfolded, [not_free x P] is [∀ s1 s2, (∀ z, z <> x -> s1 z = s2 z) ->
+    ((λ y. y = x) s1 <-> (λ y. y = x) s2)]: take any two stores that agree on every variable other
+    than [x] — [x] itself may or may not differ between them, the hypothesis
+    says nothing about it. Whenever that's the case, [P] must give the same
+    verdict (true or false) on both. So [P] simply never looks at [x]: no
+    matter what value [x] holds, as long as every other variable stays
+    fixed, [P]'s truth value can't change.
+
+    "not free" ⇔ "doesn't depend on".
+*)
+Definition not_free (x: ident) (P: assertion) : Prop :=
+  independent_of P (fun y => y = x).
+
+(** [aexp_indep e vars] denotes that [e]'s value is unaffected by changes to the variables in [vars], i.e. Free(e) ∩ vars = ∅. *)
+Definition aexp_indep (e: aexp) (vars: ident -> Prop) : Prop :=
+  forall (s1 s2 : store), (forall y, ~ vars y -> s1 y = s2 y) -> aeval e s1 = aeval e s2.
+
+(** [cexec_indep c x] denotes that [c]'s execution is invariant under
+    changes to [x] i.e. x ∉ Mod(c) and [c] does not read [x]. *)
+Definition cexec_indep (c: com) (x: ident) : Prop :=
+  forall s v r,
+  s =[ c ]=> r ->
+  (update x v s) =[ c ]=>
+        (match r with
+         | RNormal s' => RNormal (update x v s')
+         | RError  s' => RError  (update x v s')
+         end).
+
 (**
   This inductive type represents the proof system of:
   - Fig 2: Generic Proof Rules of Incorrectness Logic
@@ -69,6 +125,9 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     Inc_triple P (CSTAR c ;; c) Q ->
     (*───────────────────────────── (Iterate non-zero) *)
     Inc_triple P (CSTAR c) Q
+| Inc_iterate_zero: forall P c,
+    (*─────────────────── (Iterate zero) *)
+    ⟦ P ⟧ CSTAR c ⟦ ok ↑ P ⟧
 | Inc_error: forall P,
     (*────────────────── (Error) *)
     ⟦ P ⟧ ERROR ⟦ err ↑ P ⟧
@@ -85,6 +144,26 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     independent_of f (modified_by c) ->
     (*─────────────────────────────── (Constancy) *)
     ⟦ P //\\ f ⟧ c ⟦ ϵ ↑ Q //\\ f ⟧
+| Inc_subst_I: forall x e c P Q,
+    ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ ->
+    ~ modified_by c x ->
+    cexec_indep c x ->
+    aexp_indep e (modified_by c) ->
+    (*─────────────────────────────── (Substitution I) *)
+    ⟦ aupdate x e P ⟧ c ⟦ ϵ ↑ aupdate x e Q //\\ in_domf x ⟧
+| Inc_subst_II: forall x y c P Q, (* alpha renaming for logical/ghost variable *)
+    x <> y ->
+    ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ ->
+    cexec_indep c x ->
+    ~ modified_by c x ->
+    ~ modified_by c y ->
+    (* The paper's own side condition is just [y ∉ Free(p,C,q)], i.e.
+       [not_free y P], [not_free y Q] and [cexec_indep c y]. Our proof
+       (see [inc_triple_subst_II]) goes through without ever needing
+       those three — [cexec_indep c x] together with the two
+       [modified_by] facts already suffice — so they're dropped here. *)
+    (*─────────────────────────────── (Substitution II) *)
+    ⟦ aupdate x (VAR y) P ⟧ c ⟦ ϵ ↑ aupdate x (VAR y) Q //\\ in_domf x //\\ in_domf y ⟧
 | Inc_consequence_gen: forall P P' c (Q Q': postassertion),
     (P -->> P') ->
     Inc_triple P c Q ->
@@ -135,12 +214,55 @@ and "⟦ P ⟧ c ⟦ 'err' ↑ Q ⟧" :=
                             | RError s => Q s
                             end)).
 
-(** The notation << [p]C[ok: q][er: r] >> is a shorthand for
-    << [p]C[ok: q] >> and << [p]C[er: r] >> taken together. *)
+(** The notation [[p]C[ok: q][er: r]] is a shorthand for [[p]C[ok: q]] and [[p]C[er: r]] taken together. *)
 Notation "⟦ P ⟧ c ⟦ 'ok' ↑ Q1 ⟧ ⟦ 'err' ↑ Q2 ⟧" := (⟦ P ⟧ c ⟦ err ↑ Q1 ⟧  /\ ⟦ P ⟧ c ⟦ ok ↑ Q2 ⟧) (at level 90, c at next level).
 
-(** Notation for omitting the exit conditions ϵ *)
+(** Notation for omitting the exit conditions [ϵ] *)
 Notation "⟦ P ⟧ c ⟦ Q ⟧" := (Inc_triple P c Q) (at level 90, c at next level).
+
+Lemma eps_to_ok: forall P c Q,
+  ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ -> ⟦ P ⟧ c ⟦ ok ↑ Q ⟧.
+Proof.
+  intros P c Q H.
+  eapply Inc_consequence_gen; [ intros s Hs; exact Hs | exact H | ].
+  intros r; destruct r; cbn; tauto.
+Qed.
+
+Lemma eps_to_err: forall P c Q,
+  ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ -> ⟦ P ⟧ c ⟦ err ↑ Q ⟧.
+Proof.
+  intros P c Q H.
+  eapply Inc_consequence_gen; [ intros s Hs; exact Hs | exact H | ].
+  intros r; destruct r; cbn; tauto.
+Qed.
+
+(** ** Derivated rules
+  Everything inference rules below are proved from the original rules in
+  [Inc_triple] above described in the original theory.
+
+  Several of those constructors are stated over a raw [postassertion], because
+  their justification never inspects how the command exited.  That is general,
+  but inconvenient in practice: the exit condition has to be spelled out at
+  every use.  The lemmas below fix a tag (e.g [ϵ = ok]) once and for all.
+  - [Inc_err_cstar]: the erroring iteration rule combining [Inc_iterate_step] and [Inc_ok_seq].
+  - [Inc_combine_ok_err]: the rule for combining [[P]c[ok↑A]] and [[P]c[err↑B]] triples into [[P]c[ok↑A][err↑B]].
+  - [Inc_ok_ffalse], [Inc_err_ffalse]: the empty post in each tag shape.
+  - [Inc_assign_fwd], [Inc_nondet]: O'Hearn's substitution-style forward
+    rules.  They are strictly weaker than the relational images
+    [Inc_assign_sp] and [Inc_nondet_sp] — they lose the states in which the
+    assigned variable was not yet in the store's domain, since no old value
+    then reconstructs the pre-store — so they are obtained by post-weakening.
+  - [Inc_ok_choice], [Inc_err_choice]: the tag-tracking choice rules, from
+    [Inc_choice_l] and [Inc_choice_r] unioned by [Inc_disjunc].
+  - [Inc_choice_l_eps], [Inc_choice_r_eps]: the same constructors read at an [ϵ] post.
+  - [Inc_consequence]: the [ϵ]-shaped consequence rule, from [Inc_consequence_gen].
+  - [Inc_err_seq_split]: an error of a sequence arises either in the first
+    command or in the second; this is the form [sp_der] consumes.
+  - [Inc_backwards_variant]: the backwards-variant rule of the paper, from
+    [Inc_backwards_var]. ([Inc_iterate_zero] is a primitive constructor of
+    [Inc_triple], not a derived rule.)
+  - [disjunction_ok]: post-union at a fixed command and precondition.
+*)
 
 (** Erroring iteration: run the star to an intermediate assertion [M], take one
     further iteration of [c] that errors, and fold that extra iteration back
@@ -176,46 +298,6 @@ Proof.
   - intros r Hr; destruct r as [s|s]; cbn in Hr |- *; [ left | right ]; exact Hr.
 Qed.
 
-Lemma eps_to_ok: forall P c Q,
-  ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ -> ⟦ P ⟧ c ⟦ ok ↑ Q ⟧.
-Proof.
-  intros P c Q H.
-  eapply Inc_consequence_gen; [ intros s Hs; exact Hs | exact H | ].
-  intros r; destruct r; cbn; tauto.
-Qed.
-
-Lemma eps_to_err: forall P c Q,
-  ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ -> ⟦ P ⟧ c ⟦ err ↑ Q ⟧.
-Proof.
-  intros P c Q H.
-  eapply Inc_consequence_gen; [ intros s Hs; exact Hs | exact H | ].
-  intros r; destruct r; cbn; tauto.
-Qed.
-
-(** ** Derivated rules
-  Everything inference rules below are proved from the original rules in
-  [Inc_triple] above described in the original theory.
-
-  Several of those constructors are stated over a raw [postassertion], because
-  their justification never inspects how the command exited.  That is general,
-  but inconvenient in practice: the exit condition has to be spelled out at
-  every use.  The lemmas below fix a tag (e.g [ϵ = ok]) once and for all.
-
-  - [Inc_ok_ffalse], [Inc_err_ffalse]: the empty post in each tag shape.
-  - [Inc_assign_fwd], [Inc_nondet]: O'Hearn's substitution-style forward
-    rules.  They are strictly weaker than the relational images
-    [Inc_assign_sp] and [Inc_nondet_sp] — they lose the states in which the
-    assigned variable was not yet in the store's domain, since no old value
-    then reconstructs the pre-store — so they are obtained by post-weakening.
-  - [Inc_ok_choice], [Inc_err_choice]: the tag-tracking choice rules, from
-    [Inc_choice_l] and [Inc_choice_r] unioned by [Inc_disjunc].
-  - [Inc_choice_l_eps], [Inc_choice_r_eps]: the same constructors read at an [ϵ] post.
-  - [Inc_consequence]: the [ϵ]-shaped consequence rule, from [Inc_consequence_gen].
-  - [Inc_err_seq_split]: an error of a sequence arises either in the first
-    command or in the second; this is the form [sp_der] consumes.
-  - [Inc_iterate_zero], [Inc_backwards_variant]: the iteration rules of the paper, from [Inc_backwards_var].
-  - [disjunction_ok]: post-union at a fixed command and precondition.
-*)
 
 Lemma Inc_ok_ffalse: forall P c, ⟦ P ⟧ c ⟦ ok ↑ ffalse ⟧.
 Proof. intros P c. apply eps_to_ok, Inc_Empty_under_approx. Qed.
@@ -315,18 +397,6 @@ Proof.
       [ apply Inc_err_seq, HR1 | exact (Inc_ok_seq P c1 c2 Q1 _ HQ1 HR2) ].
   - intros r Hr; destruct r as [s|s]; cbn in Hr |- *;
       [ destruct Hr | destruct Hr as [h|h]; [ left | right ]; exact h ].
-Qed.
-
-Lemma Inc_iterate_zero: forall P c,
-    ⟦ P ⟧ CSTAR c ⟦ ok ↑ P ⟧.
-Proof.
-  intros P c.
-  eapply Inc_consequence_gen;
-    [ intros s Hs; exact Hs
-    | apply (Inc_backwards_var (fun n => match n with O => P | S _ => ffalse end) c);
-      intros [|n]; apply Inc_ok_ffalse
-    | ].
-  intros r; destruct r as [s|s]; cbn; [ intros Hs; exists 0%nat; exact Hs | tauto ].
 Qed.
 
 (** The backwards variant rule is [Inc_backwards_var] with [n + 1] in place of
@@ -626,42 +696,10 @@ Proof.
     - exfalso. apply HQ.
 Qed.
 
-(** Syntactic substitution [e/x] on arithmetic expressions. *)
-Fixpoint asubst (x: ident) (e: aexp) (a: aexp) : aexp :=
-  match a with
-  | CONST n     => CONST n
-  | VAR y       => if string_dec x y then e else VAR y
-  | PLUS  a1 a2 => PLUS  (asubst x e a1) (asubst x e a2)
-  | MINUS a1 a2 => MINUS (asubst x e a1) (asubst x e a2)
-  end.
-
-(** "Variable [x] is not free in [P]." *)
-Definition not_free (x: ident) (P: assertion) : Prop :=
-  independent_of P (fun y => y = x).
-
-(** "Free([e]) ∩ vars = ∅". *)
-Definition aexp_indep (e: aexp) (vars: ident -> Prop) : Prop :=
-  forall (s1 s2 : store), (forall y, ~ vars y -> s1 y = s2 y) -> aeval e s1 = aeval e s2.
-
-(** "c's trajectory is invariant under changes to x":
-    every cexec from s can be shifted to a cexec from (update x v s) ending
-    in the corresponding x-shifted result. Implies x ∉ mod(c) and that c
-    does not read x. *)
-Definition cexec_indep (c: com) (x: ident) : Prop :=
-  forall s v r,
-  cexec s c r ->
-  cexec (update x v s) c
-        (match r with
-         | RNormal s' => RNormal (update x v s')
-         | RError  s' => RError  (update x v s')
-         end).
-
 (* Substitution I:
             [p] c [ε: q]
-    ————————————————————————————————
+    ———————————————————————————————— ((Free(e) ∪ {x }) ∩ Free(C) = ∅)
         [p[e/x]] c [ε: q[e/x]]
- side conditions: c is x-invariant, [e]'s value is preserved by c's
- modifications, and x is not free in e.
 *)
 Lemma inc_triple_subst_I: forall x e c P Q,
   ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
@@ -727,32 +765,54 @@ Proof.
       rewrite Heq_out in STEP. exact STEP.
 Qed.
 
-(** Substitution II: renaming with a fresh variable [y].
+(** Substitution II (alpha renaming for logical/ghost variable):
+  consistently rename [x] to a fresh variable [y]
+  throughout a whole triple — from [P] c [ϵ: Q] derive
+  [P[y/x]] c [ϵ: Q[y/x]]] (same command [c], only the specification
+  is renamed).
 
-  The original statement (with only [cexec_indep c y]) is not provable: the
-  semantic IL triple requires constructing a witness [s_pre] such that
-  [s_pre =[c]=> s_out], but the only [s_in] available from [HT] reaches
-  [update x (s_out y) s_out].  Without [c] being [x]-invariant, we cannot
-  shift [x] in [s_in] to repair this.
+        [p] c [ε: q]
+  ———————————————————————————————— (y ∉ Free(p, C, q))
+      ([p] c [ε: q])(y/x)
 
-  The provable version adds [cexec_indep c x], [~modified_by c x],
-  [~modified_by c y], and [x ∈ domf s_out], [y ∈ domf s_out] (the latter
-  two are vacuous under the old function-store model, real under finmap).
+  The paper only asks for [y] to be fresh, i.e. unused by [p], [C] and
+  [q]. But we need more than that, the conclusion keeps the very same [c]
+  — we never rewrite occurrences of [x] to [y] inside [c] itself, only around it, in [P] and [Q].
+  So the same [c] is independent on the two variables.
+  It's not enough for [c] to be blind to [y]; it must be
+  just as blind to [x] — hence [cexec_indep c x] on top of the expected
+  [cexec_indep c y] (see below for why even that is finally dropped).
+
+  Concretely, the proof runs backwards: from a final store matching
+  [Q[y/x]], it borrows a witness from the original triple by first
+  copying [y]'s value into [x] (so the lookup matches [Q]), then has to
+  undo that copy on the initial store afterwards, without disturbing
+  [c]'s actual run. That undo step is exactly [cexec_indep c x].
+
+  [~modified_by c x] and [~modified_by c y] are needed for a different
+  reason: our stores are partial maps ([finmap]), not total functions —
+  a variable can be genuinely *absent*, not just zero. If [c] could
+  write to [x] or [y], it might add either to the store's domain where
+  it wasn't before, breaking the domain bookkeeping ([x ∈ domf s_out],
+  [y ∈ domf s_out]) the proof relies on to reconstruct states.
+
+  Given all that, it turns out [not_free y P], [not_free y Q] and
+  [cexec_indep c y] — the paper's own side condition, [y ∉ Free(p,C,q)]
+  — are never actually needed: [cexec_indep c x] together with the two
+  [modified_by] facts already carry the whole proof. So the version
+  below drops them; see [Inc_subst_II] for the (shorter) syntactic rule.
 *)
 Lemma inc_triple_subst_II: forall x y c P Q,
   x <> y ->
   ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ ->
-  not_free y P ->
-  not_free y Q ->
-  cexec_indep c y ->
-  cexec_indep c x ->
-  ~ modified_by c x ->
-  ~ modified_by c y ->
+  cexec_indep c x -> (* (doesn't read it)  *)
+  ~ modified_by c x -> (* (doesn't write it) *)
+  ~ modified_by c y -> (* (doesn't write the fresh variable) *)
   ⟦⟦ aupdate x (VAR y) P ⟧⟧ c
   ⟦⟦ ϵ ↑ aupdate x (VAR y) Q //\\ in_domf x //\\ in_domf y ⟧⟧.
 Proof.
   unfold IncTriple, aupdate, aand, in_domf, not_free, independent_of.
-  intros x y c P Q Hxy HT NFP NFQ INDy INDx NMODx NMODy r HQex.
+  intros x y c P Q Hxy HT INDx NMODx NMODy r HQex.
   destruct r as [s_out | s_out].
   - destruct HQex as [HQex [Hdx Hdy]].
     cbn in HQex.
@@ -1101,10 +1161,13 @@ Proof.
   - (* Inc_Empty_under_approx *) apply inc_triple_empty_under_approx.
   - (* Inc_triple_skip *) apply inc_triple_skip.
   - (* Inc_iterate_step *) apply inc_triple_iterate_non_zero; assumption.
+  - (* Inc_iterate_zero *) apply inc_triple_iterate_zero.
   - (* Inc_error *) apply inc_triple_error.
   - (* Inc_assume *) apply inc_triple_assume.
   - (* Inc_disjunc *) apply inc_triple_disjunc_gen; assumption.
   - (* Inc_constancy *) apply inc_triple_constancy; assumption.
+  - (* Inc_subst_I *) apply inc_triple_subst_I; assumption.
+  - (* Inc_subst_II *) apply inc_triple_subst_II; assumption.
   - (* Inc_consequence_gen *) eapply inc_triple_consequence_gen; eassumption.
   - (* Inc_assign_sp *) apply inc_triple_assign_sp.
   - (* Inc_nondet_sp *) apply inc_triple_nondet_sp.
