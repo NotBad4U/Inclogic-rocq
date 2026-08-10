@@ -42,19 +42,19 @@ Proof. intro s. rewrite string_of_list_ascii_of_string. reflexivity. Qed.
 HB.instance Definition _ := PCanHasChoice string_pickleK.
 HB.instance Definition _ := PCanIsCountable string_pickleK.
 
-(** * 1.  The IMP language *)
+(** *  The IMP language *)
 
-(** ** 1.1 Arithmetic expressions *)
+(** ** Arithmetic expressions *)
 
 Definition ident := string.
 
 (** The abstract syntax: an arithmetic expression is either... *)
 
 Inductive aexp : Type :=
-  | CONST (n: Z)                       (**r a constant, or *)
-  | VAR (x: ident)                     (**r a variable, or *)
-  | PLUS (a1: aexp) (a2: aexp)         (**r a sum of two expressions, or *)
-  | MINUS (a1: aexp) (a2: aexp).       (**r a difference of two expressions *)
+  | CONST (n: Z)                       (** a constant, or *)
+  | VAR (x: ident)                     (** a variable, or *)
+  | PLUS (a1: aexp) (a2: aexp)         (** a sum of two expressions, or *)
+  | MINUS (a1: aexp) (a2: aexp).       (** a difference of two expressions *)
 
 Definition store : Type := {fmap ident -> Z}.
 Definition sget (s: store) (x: ident) : Z := odflt 0%Z s.[? x]%fmap.
