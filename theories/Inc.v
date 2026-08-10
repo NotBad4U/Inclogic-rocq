@@ -150,7 +150,7 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     cexec_indep c x ->
     aexp_indep e (modified_by c) ->
     (*─────────────────────────────── (Substitution I) *)
-    ⟦ aupdate x e P ⟧ c ⟦ ϵ ↑ aupdate x e Q //\\ in_domf x ⟧
+    ⟦ P [ x ↦ e ] ⟧ c ⟦ ϵ ↑ Q [ x ↦ e ] //\\ in_domf x ⟧
 | Inc_subst_II: forall x y c P Q, (* alpha renaming for logical/ghost variable *)
     x <> y ->
     ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ ->
@@ -163,7 +163,7 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
        those three — [cexec_indep c x] together with the two
        [modified_by] facts already suffice — so they're dropped here. *)
     (*─────────────────────────────── (Substitution II) *)
-    ⟦ aupdate x (VAR y) P ⟧ c ⟦ ϵ ↑ aupdate x (VAR y) Q //\\ in_domf x //\\ in_domf y ⟧
+    ⟦ P [ x ↦ VAR y ] ⟧ c ⟦ ϵ ↑ Q [ x ↦ VAR y ] //\\ in_domf x //\\ in_domf y ⟧
 | Inc_consequence_gen: forall P P' c (Q Q': postassertion),
     (P -->> P') ->
     Inc_triple P c Q ->
@@ -706,7 +706,7 @@ Lemma inc_triple_subst_I: forall x e c P Q,
   ~ modified_by c x ->
   cexec_indep c x ->
   aexp_indep e (modified_by c) ->
-  ⟦⟦ aupdate x e P ⟧⟧ c ⟦⟦ ϵ ↑ aupdate x e Q //\\ in_domf x ⟧⟧.
+  ⟦⟦ P [ x ↦ e ] ⟧⟧ c ⟦⟦ ϵ ↑ Q [ x ↦ e ] //\\ in_domf x ⟧⟧.
 Proof.
   unfold IncTriple, aupdate, aexp_indep, cexec_indep, aand, in_domf.
   intros x e c P Q HT NMOD IND EDEP r HQex.
@@ -808,8 +808,8 @@ Lemma inc_triple_subst_II: forall x y c P Q,
   cexec_indep c x -> (* (doesn't read it)  *)
   ~ modified_by c x -> (* (doesn't write it) *)
   ~ modified_by c y -> (* (doesn't write the fresh variable) *)
-  ⟦⟦ aupdate x (VAR y) P ⟧⟧ c
-  ⟦⟦ ϵ ↑ aupdate x (VAR y) Q //\\ in_domf x //\\ in_domf y ⟧⟧.
+  ⟦⟦ P [ x ↦ VAR y ] ⟧⟧ c
+  ⟦⟦ ϵ ↑ Q [ x ↦ VAR y ] //\\ in_domf x //\\ in_domf y ⟧⟧.
 Proof.
   unfold IncTriple, aupdate, aand, in_domf, not_free, independent_of.
   intros x y c P Q Hxy HT INDx NMODx NMODy r HQex.
