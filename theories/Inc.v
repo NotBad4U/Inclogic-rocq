@@ -13,16 +13,45 @@
   can be reached starting from states satisfying the presumption.
   Incorrectness logic adds post-assertions for errors as well as for normal termination, and these assertions describe erroneous states that can be reached by actual program executions
 
-  Numbered references below are to the article: Fig 2 and Fig 3 are the two sets of proof
-  rules (p. 10:8), Fig 4 the relational denotational semantics (p. 10:12).
+  * Relation to the Hoare triple
+
+  An incorrectness triple is not the negation of a Hoare triple,
+  it is its dual: writing [post(c)(P) = { r | ∃ s, P s ∧ cexec s c r }] for the set
+  of results reachable from [P], the two forms are the two directions of one inclusion,
+
+    Hoare          ⦃⦃ P ⦄⦄ c ⦃⦃ Q ⦄⦄    is    post(c)(P) ⊆ Q     (over-approximate)
+    Incorrectness  ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧    is    Q ⊆ post(c)(P)     (under-approximate)
+
+  (in [triple] the right-hand side is really the normal results in [Q], since Hoare here
+  also rules out errors).  Neither direction implies the other, and neither implies the
+  other's negation: an incorrectness triple with [Q = ffalse] is trivially valid whatever
+  the program does.  Their conjunction is what pins down [post(c)(P) = Q] exactly.
+  Read modally the duality is box against diamond over the reversed relation: Hoare says
+  [P ⊆ [c] Q], every execution lands in [Q]; incorrectness says [Q ⊆ ⟨c⁻¹⟩ P], every result
+  is witnessed by some execution.  ([Sil.v] takes the remaining corner, the backward
+  under-approximate one.)
+
+  Negation appears only when an incorrectness triple is *used* to refute a putative Hoare
+  triple, and that needs two further side conditions — the Principle of Denial, [denial]:
+
+    ⟦ U ⟧ c ⟦ ϵ ↑ U' ⟧  →  U ⇒ O  →  ¬ (U' ⇒ O')  →  ¬(⦃ O ⦄ c ⦃ O' ⦄)
+
+  The under-approximation must sit inside the putative precondition ([U ⇒ O]) and its
+  result must escape the putative postcondition ([¬ (U' ⇒ O')]).  Its contrapositive is the
+  Principle of Agreement, [agreement] (and [agreement_Triple] for the strong Hoare triple
+  [⦇ _ ⦈ _ ⦇ _ ⦈]); the two are logically equivalent.  Because [triple] also demands
+  error-freedom, an erroneous post gives a shorter refutation: ⟦ O ⟧ c ⟦ err ↑ E ⟧ with [E]
+  satisfiable denies ⦃ O ⦄ c ⦃ O' ⦄ for *every* [O'].
+
+  * Architecture overview:
 
   - [Inductive Inc_triple] represents the proof system of the incorrectness logic, and is defined by the rules in Fig 2 and Fig 3.
   - [IncTriple] denotes the semantics of the incorrectness logic triple.  It is
-    *Definition 1* (Post and Semantic Triples) read through *Definition 4* (Interpretation of
+    _Definition 1_ (Post and Semantic Triples) read through _Definition 4_ (Interpretation of
     Specifications).
-  - [Module IncSoundness] is *Theorem 5* (Soundness): the semantics validates every axiom
+  - [Module IncSoundness] is _Theorem 5_ (Soundness): the semantics validates every axiom
     and inference rule, so every derivable triple is semantically valid.
-  - [Module IncCompleteness] is *Theorem 6* (Completeness): every valid triple is
+  - [Module IncCompleteness] is _Theorem 6_ (Completeness): every valid triple is
     derivable.
   - [Module SP] is the strongest-post calculus, computing those posts rather than
     postulating them.  It follows Section 5.2 (Predicate Transformers), where the article gives
@@ -50,6 +79,12 @@ Reserved Notation "⟦ P ⟧ c ⟦ 'ok' ↑ Q ⟧" (at level 90, c at next level
 Reserved Notation "⟦ P ⟧ c ⟦ 'ϵ' ↑ Q ⟧" (at level 90, c at next level).
 
 Reserved Notation "⟦ P ⟧ c ⟦ 'err' ↑ Q ⟧" (at level 90, c at next level).
+
+(** The untagged form: [Q] is a raw [postassertion], free to distinguish
+    [RNormal] from [RError].  It is the general shape, of which the three
+    tagged notations above are instances — not an [ϵ] triple with the tag
+    left implicit. *)
+Reserved Notation "⟦ P ⟧ c ⟦ Q ⟧" (at level 90, c at next level).
 
 Definition ffalse : assertion := fun _ => False.
 
@@ -111,37 +146,70 @@ Definition cexec_indep (c: com) (x: ident) : Prop :=
 
 (**
   This inductive type represents the proof system of:
-  - Fig 2: Generic Proof Rules of Incorrectness Logic
-  - and Fig 3: Rules for Variables and Mutation
+  - _Fig 2_: Generic Proof Rules of Incorrectness Logic
+  - and _Fig 3_: Rules for Variables and Mutation
 *)
 Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
 | Inc_Empty_under_approx: forall P c,
   (*─────────────────── (Empty under-approximates)*)
   ⟦ P ⟧ c ⟦ ϵ ↑ ffalse ⟧
+| Inc_consequence_gen: forall P P' c (Q Q': postassertion),
+    (P -->> P') ->
+    ⟦ P ⟧ c ⟦ Q ⟧ ->
+    (Q' --* Q) ->
+    (*────────────────── (Consequence) *)
+    ⟦ P' ⟧ c ⟦ Q' ⟧
+| Inc_disjunc: forall P1 P2 c (Q1 Q2: postassertion),
+    ⟦ P1 ⟧ c ⟦ Q1 ⟧ ->
+    ⟦ P2 ⟧ c ⟦ Q2 ⟧ ->
+    (*─────────────────────────────── (Disjunction) *)
+    ⟦ P1 \\// P2 ⟧ c ⟦ fun r => Q1 r \/ Q2 r ⟧
 | Inc_triple_skip: forall P,
   (*─────────────────── (Unit) *)
   ⟦ P ⟧ SKIP ⟦ ok ↑ P ⟧
-| Inc_iterate_step: forall P c (Q: postassertion),
-    Inc_triple P (CSTAR c ;; c) Q ->
-    (*───────────────────────────── (Iterate non-zero) *)
-    Inc_triple P (CSTAR c) Q
+| Inc_err_seq: forall P c1 c2 R,
+    ⟦ P ⟧ c1 ⟦ err ↑ R ⟧ ->
+    (*──────────── (Sequencing (short-circuit)) *)
+    ⟦ P ⟧ (c1 ;; c2) ⟦ err ↑ R ⟧
+| Inc_ok_seq: forall P c1 c2 Q1 (Q2: postassertion),
+    ⟦ P ⟧ c1 ⟦ ok ↑ Q1 ⟧ ->
+    ⟦ Q1 ⟧ c2 ⟦ Q2 ⟧ ->
+    (*───────────── (Sequencing (normal)) *)
+    ⟦ P ⟧ (c1 ;; c2) ⟦ Q2 ⟧
 | Inc_iterate_zero: forall P c,
     (*─────────────────── (Iterate zero) *)
     ⟦ P ⟧ CSTAR c ⟦ ok ↑ P ⟧
+| Inc_iterate_step: forall P c (Q: postassertion),
+    ⟦ P ⟧ (CSTAR c ;; c) ⟦ Q ⟧ ->
+    (*───────────────────────────── (Iterate non-zero) *)
+    ⟦ P ⟧ (CSTAR c) ⟦ Q ⟧
+| Inc_backwards_var: forall (P: nat -> assertion) c,
+    (forall n, ⟦ P n ⟧ c ⟦ ok ↑ P (S n) ⟧) ->
+    (*────────────────────────────────────────────────── (Backwards Variant (where n fresh)) *)
+    ⟦ P 0%nat ⟧ CSTAR c ⟦ ok ↑ (fun s => exists m, P m s) ⟧
+| Inc_choice_l: forall P c1 c2 (Q: postassertion),
+    ⟦ P ⟧ c1 ⟦ Q ⟧ ->
+    (*───────────────────── (Choice i = 1) *)
+    ⟦ P ⟧ (c1 ⊕ c2) ⟦ Q ⟧
+| Inc_choice_r: forall P c1 c2 (Q: postassertion),
+    ⟦ P ⟧ c2 ⟦ Q ⟧ ->
+    (*───────────────────── (Choice i = 2) *)
+    ⟦ P ⟧ (c1 ⊕ c2) ⟦ Q ⟧
 | Inc_error: forall P,
     (*────────────────── (Error) *)
     ⟦ P ⟧ ERROR ⟦ err ↑ P ⟧
 | Inc_assume : forall P b,
     (*──────────────────────────────────── (Assume) *)
     ⟦ P ⟧ (ASSUME b) ⟦ ok ↑ atrue b //\\ P ⟧
-| Inc_disjunc: forall P1 P2 c (Q1 Q2: postassertion),
-    Inc_triple P1 c Q1 ->
-    Inc_triple P2 c Q2 ->
-    (*─────────────────────────────── (Disjunction) *)
-    Inc_triple (P1 \\// P2) c (fun r => Q1 r \/ Q2 r)
+| Inc_assign_sp: forall x a P,
+    (*──────────────────────────────────────────────────────────────────── (Assignment) *)
+    ⟦ P ⟧ ASSIGN x a ⟦ ok ↑ (fun s' => exists s, P s /\ s' = update x (aeval a s) s) ⟧
+| Inc_nondet_sp: forall x P,
+    (*──────────────────────────────────────────────────────────────────── (Nondet Assignment) *)
+    ⟦ P ⟧ NONDET x ⟦ ok ↑ (fun s' => exists s n, P s /\ s' = update x n s) ⟧
 | Inc_constancy: forall P c Q f,
     ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ ->
-    independent_of f (modified_by c) ->
+    independent_of f (modified_by c) -> (* i.e. Mod(C) ∩ Free(f) = ∅ *)
     (*─────────────────────────────── (Constancy) *)
     ⟦ P //\\ f ⟧ c ⟦ ϵ ↑ Q //\\ f ⟧
 | Inc_subst_I: forall x e c P Q,
@@ -164,39 +232,6 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
        [modified_by] facts already suffice — so they're dropped here. *)
     (*─────────────────────────────── (Substitution II) *)
     ⟦ P [ x ↦ VAR y ] ⟧ c ⟦ ϵ ↑ Q [ x ↦ VAR y ] //\\ in_domf x //\\ in_domf y ⟧
-| Inc_consequence_gen: forall P P' c (Q Q': postassertion),
-    (P -->> P') ->
-    Inc_triple P c Q ->
-    (forall r, Q' r -> Q r) ->
-    (*────────────────── (Consequence) *)
-    Inc_triple P' c Q'
-| Inc_assign_sp: forall x a P,
-    (*──────────────────────────────────────────────────────────────────── (Assignment) *)
-    ⟦ P ⟧ ASSIGN x a ⟦ ok ↑ (fun s' => exists s, P s /\ s' = update x (aeval a s) s) ⟧
-| Inc_nondet_sp: forall x P,
-    (*──────────────────────────────────────────────────────────────────── (Nondet Assignment) *)
-    ⟦ P ⟧ NONDET x ⟦ ok ↑ (fun s' => exists s n, P s /\ s' = update x n s) ⟧
-| Inc_ok_seq: forall P c1 c2 Q1 (Q2: postassertion),
-    ⟦ P ⟧ c1 ⟦ ok ↑ Q1 ⟧ ->
-    Inc_triple Q1 c2 Q2 ->
-    (*───────────── (Sequencing (normal)) *)
-    Inc_triple P (c1 ;; c2) Q2
-| Inc_err_seq: forall P c1 c2 R,
-    ⟦ P ⟧ c1 ⟦ err ↑ R ⟧ ->
-    (*──────────── (Sequencing (short-circuit)) *)
-    ⟦ P ⟧ (c1 ;; c2) ⟦ err ↑ R ⟧
-| Inc_choice_l: forall P c1 c2 (Q: postassertion),
-    Inc_triple P c1 Q ->
-    (*───────────────────── (Choice i = 1) *)
-    Inc_triple P (c1 ⊕ c2) Q
-| Inc_choice_r: forall P c1 c2 (Q: postassertion),
-    Inc_triple P c2 Q ->
-    (*───────────────────── (Choice i = 2) *)
-    Inc_triple P (c1 ⊕ c2) Q
-| Inc_backwards_var: forall (P: nat -> assertion) c,
-    (forall n, ⟦ P n ⟧ c ⟦ ok ↑ P (S n) ⟧) ->
-    (*────────────────────────────────────────────────── (Backwards Variant (where n fresh)) *)
-    ⟦ P 0%nat ⟧ CSTAR c ⟦ ok ↑ (fun s => exists m, P m s) ⟧
 where "⟦ P ⟧ c ⟦ 'ϵ' ↑ Q ⟧" :=
   (Inc_triple P c (fun r => match r with
                             | RNormal s => Q s
@@ -212,13 +247,11 @@ and "⟦ P ⟧ c ⟦ 'err' ↑ Q ⟧" :=
   (Inc_triple P c (fun r => match r with
                             | RNormal _ => False
                             | RError s => Q s
-                            end)).
+                            end))
+and "⟦ P ⟧ c ⟦ Q ⟧" := (Inc_triple P c Q).
 
 (** The notation [[p]C[ok: q][er: r]] is a shorthand for [[p]C[ok: q]] and [[p]C[er: r]] taken together. *)
 Notation "⟦ P ⟧ c ⟦ 'ok' ↑ Q1 ⟧ ⟦ 'err' ↑ Q2 ⟧" := (⟦ P ⟧ c ⟦ err ↑ Q1 ⟧  /\ ⟦ P ⟧ c ⟦ ok ↑ Q2 ⟧) (at level 90, c at next level).
-
-(** Notation for omitting the exit conditions [ϵ] *)
-Notation "⟦ P ⟧ c ⟦ Q ⟧" := (Inc_triple P c Q) (at level 90, c at next level).
 
 Lemma eps_to_ok: forall P c Q,
   ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ -> ⟦ P ⟧ c ⟦ ok ↑ Q ⟧.
@@ -547,6 +580,7 @@ Proof.
   - eapply cexec_seq_error_right; eauto.
 Qed.
 
+(* Generic sequencing on exit tag of Q2 *)
 Lemma inc_triple_seq_ok_gen: forall P c1 c2 Q1 (Q2: postassertion),
     ⟦⟦ P ⟧⟧  c1 ⟦⟦ ok ↑ Q1 ⟧⟧ ->
     ⟦⟦ Q1 ⟧⟧ c2 ⟦⟦ Q2 ⟧⟧ ->
@@ -905,7 +939,7 @@ Proof.
   - rewrite update_shadow. apply update_get. exact Hdom.
 Qed.
 
-(** O'Hearn's *Derived Unrolling Rule* (p. 10:9): iteration can execute its
+(** O'Hearn's _Derived Unrolling Rule_: iteration can execute its
     body [i] times, so a post may be assembled from the finite unrollings. *)
 
 Fixpoint cmd_n (i: nat) c : com :=
@@ -933,6 +967,11 @@ Proof.
       eapply cexec_cstar_step_iter_error; eauto.
 Qed.
 
+(**
+  [p]Ci [ϵ: qi ], all i ≤ bound*
+  ─────────────────────────────── (Derived Unrolling Rule)
+  [p]C⋆[ϵ: ∨i ≤bound qi ]
+*)
 Lemma inc_triple_derived_unrolling: forall P c (postassert_i: nat -> assertion),
     (forall i, ⟦⟦ P ⟧⟧ (cmd_n i c) ⟦⟦ ϵ ↑ postassert_i i ⟧⟧) ->
     ⟦⟦ P ⟧⟧ c ★ ⟦⟦ ϵ ↑ aexists (fun i => postassert_i i) ⟧⟧.
@@ -945,10 +984,11 @@ Proof.
     exists s. split; [ exact HPs | apply cmd_n_to_cstar in EXEC; exact EXEC ].
 Qed.
 
-Module SPre.
-
-(* Derived Rule of Choice *)
-
+(**
+  [p] C1 [ϵ: q1]    [p] C2 [ϵ: q2]
+  ─────────────────────────────── (Derived Rule of Choice)
+  [p] C1 + C2 [ϵ: q1 ∨ q2]
+*)
 Lemma inc_triple_derived_choice: forall P c1 c2 Q1 Q2,
     ⟦⟦ P ⟧⟧ c1 ⟦⟦ ϵ ↑ Q1 ⟧⟧ ->
     ⟦⟦ P ⟧⟧ c2 ⟦⟦ ϵ ↑ Q2 ⟧⟧ ->
@@ -965,20 +1005,13 @@ Proof.
   - apply (H2 (RError s) HQ2).
 Qed.
 
-End SPre.
-
-
-(** ── Semantic soundness lemmas for the tag-tracking rules ──────────────
-    Each is the [⟦⟦ ⟧⟧] (reachability) counterpart of one tag-tracking
-    constructor of [Inc_triple], mirroring a clause of [cexec].  They feed
-    the corresponding cases of [Inc_triple_sound]. *)
 
 (** Postassertion-level consequence: strengthen the precondition, shrink the
     postassertion. *)
 Lemma inc_triple_consequence_gen: forall P P' c (Q Q': postassertion),
     (P -->> P') ->
     ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧ ->
-    (forall r, Q' r -> Q r) ->
+    (Q' --* Q) ->
     ⟦⟦ P' ⟧⟧ c ⟦⟦ Q' ⟧⟧.
 Proof.
   intros P P' c Q Q' HPP' HT Hsub r HQ'.
@@ -1159,23 +1192,23 @@ Theorem Inc_triple_sound: forall P c Q,
 Proof.
   intros P c Q H. induction H.
   - (* Inc_Empty_under_approx *) apply inc_triple_empty_under_approx.
+  - (* Inc_consequence_gen *) eapply inc_triple_consequence_gen; eassumption.
+  - (* Inc_disjunc *) apply inc_triple_disjunc_gen; assumption.
   - (* Inc_triple_skip *) apply inc_triple_skip.
-  - (* Inc_iterate_step *) apply inc_triple_iterate_non_zero; assumption.
+  - (* Inc_err_seq *) apply inc_triple_seq_short_circuit; assumption.
+  - (* Inc_ok_seq *) eapply inc_triple_seq_ok_gen; eassumption.
   - (* Inc_iterate_zero *) apply inc_triple_iterate_zero.
+  - (* Inc_iterate_step *) apply inc_triple_iterate_non_zero; assumption.
+  - (* Inc_backwards_var *) apply inc_triple_ok_cstar; assumption.
+  - (* Inc_choice_l *) apply inc_triple_choice_l_gen; assumption.
+  - (* Inc_choice_r *) apply inc_triple_choice_r_gen; assumption.
   - (* Inc_error *) apply inc_triple_error.
   - (* Inc_assume *) apply inc_triple_assume.
-  - (* Inc_disjunc *) apply inc_triple_disjunc_gen; assumption.
+  - (* Inc_assign_sp *) apply inc_triple_assign_sp.
+  - (* Inc_nondet_sp *) apply inc_triple_nondet_sp.
   - (* Inc_constancy *) apply inc_triple_constancy; assumption.
   - (* Inc_subst_I *) apply inc_triple_subst_I; assumption.
   - (* Inc_subst_II *) apply inc_triple_subst_II; assumption.
-  - (* Inc_consequence_gen *) eapply inc_triple_consequence_gen; eassumption.
-  - (* Inc_assign_sp *) apply inc_triple_assign_sp.
-  - (* Inc_nondet_sp *) apply inc_triple_nondet_sp.
-  - (* Inc_ok_seq *) eapply inc_triple_seq_ok_gen; eassumption.
-  - (* Inc_err_seq *) apply inc_triple_seq_short_circuit; assumption.
-  - (* Inc_choice_l *) apply inc_triple_choice_l_gen; assumption.
-  - (* Inc_choice_r *) apply inc_triple_choice_r_gen; assumption.
-  - (* Inc_backwards_var *) apply inc_triple_ok_cstar; assumption.
 Qed.
 
 
@@ -1220,7 +1253,7 @@ Qed.
   To understand the Principle of Agreement, consider the following diagram:
              o                                    o'
         +--------------+                    +--------------+
-        |  *           |------------------->|      *       |
+        |      *       |------------------->|      *       |
         |              |                    |              |
         |  +--------+  |                    |  +-----------+-----+
         |  |   *    |--|------------------->|  |    *      |     |
@@ -1423,7 +1456,7 @@ Fixpoint spo_iter (c: com) (P: assertion) (n: nat) : assertion :=
 
 (** Pure post-weakening (consequence keeping the precondition fixed). *)
 Lemma Inc_post_weaken: forall P c (Q Q': postassertion),
-  Inc_triple P c Q -> (forall r, Q' r -> Q r) -> Inc_triple P c Q'.
+  Inc_triple P c Q -> (Q' --* Q) -> Inc_triple P c Q'.
 Proof.
   intros P c Q Q' H Hsub.
   eapply Inc_consequence_gen; [ intros s Hs; exact Hs | exact H | exact Hsub ].
