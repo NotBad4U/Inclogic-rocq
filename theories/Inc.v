@@ -1573,12 +1573,13 @@ Qed.
 
     [spo c P] / [spe c P] are the strongest normal / erroring postconditions
     of [c] from [P], expressed directly through the operational semantics.
-    They are the two post-images of O'Hearn's *Definition 1*, taken over the
-    [ok] and [er] relations of Fig 4.  By *Proposition 8* the post operator is
+    They are the two post-images of O'Hearn's _Definition 1_, taken over the
+    [ok] and [er] relations of Fig 4.  By _Proposition 8_ the post operator is
     at once the strongest over-approximate and the weakest under-approximate
     post (*Definition 7*), which is why weakening from it suffices below. *)
 Definition spo (c: com) (P: assertion) : assertion :=
   fun s' => exists s, P s /\ s =[ c ]=> RNormal s'.
+
 Definition spe (c: com) (P: assertion) : assertion :=
   fun s' => exists s, P s /\ s =[ c ]=> RError s'.
 
@@ -1730,16 +1731,18 @@ Qed.
     the article, the argument runs by induction on the command through the
     strongest posts, using the Backwards Variant rule for iteration. *)
 Theorem Inc_complete:
-  forall P c Q, ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ -> ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧.
+  forall P c Q, ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧ -> ⟦ P ⟧ c ⟦ Q ⟧.
 Proof.
   intros P c Q H.
   destruct (sp_der c P) as [Hok Herr].
   eapply Inc_post_weaken;
     [ exact (Inc_combine_ok_err P c (spo c P) (spe c P) Hok Herr) | ].
-  intros r; destruct r as [s|s]; cbn; intros HQ.
-  - exact (H (RNormal s) HQ).
-  - exact (H (RError s) HQ).
+  intros r Hr; destruct r as [s|s]; exact (H _ Hr).
 Qed.
+
+Corollary Inc_complete_ϵ:
+  forall P c Q, ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧ -> ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧.
+Proof. intros P c Q H. exact (Inc_complete P c _ H). Qed.
 
 
 End IncCompleteness.
@@ -1748,7 +1751,7 @@ End IncCompleteness.
 
 Module SP.
 
-  (** This is the language of commands where [WHILE] loops are annotated by an invariant [Inv]. *)
+  (** This is the language of commands where [CSTAR] are annotated by an invariant [Inv]. *)
   Inductive acom: Type :=
   | SKIP                         (**r do nothing *)
   | ERROR                        (**r interrupt the program *)
