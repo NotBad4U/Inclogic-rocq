@@ -7,7 +7,9 @@
   The incorrectness logic is a formal system for reasoning about under-approximation, and can be used to prove the presence of bugs in programs.
   It use a use a specification form:
 
+<<  
     [presumption] code [result]
+>>
 
   which says that the post-assertion result be an under-approximation (subset) of the final states that
   can be reached starting from states satisfying the presumption.
@@ -19,8 +21,10 @@
   it is its dual: writing [post(c)(P) = { r | ∃ s, P s ∧ cexec s c r }] for the set
   of results reachable from [P], the two forms are the two directions of one inclusion,
 
+<<
     Hoare          ⦃⦃ P ⦄⦄ c ⦃⦃ Q ⦄⦄    is    post(c)(P) ⊆ Q     (over-approximate)
     Incorrectness  ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧    is    Q ⊆ post(c)(P)     (under-approximate)
+>>
 
   (in [triple] the right-hand side is really the normal results in [Q], since Hoare here
   also rules out errors).  Neither direction implies the other, and neither implies the
@@ -34,7 +38,9 @@
   Negation appears only when an incorrectness triple is *used* to refute a putative Hoare
   triple, and that needs two further side conditions — the Principle of Denial, [denial]:
 
+<<  
     ⟦ U ⟧ c ⟦ ϵ ↑ U' ⟧  →  U ⇒ O  →  ¬ (U' ⇒ O')  →  ¬(⦃ O ⦄ c ⦃ O' ⦄)
+>>
 
   The under-approximation must sit inside the putative precondition ([U ⇒ O]) and its
   result must escape the putative postcondition ([¬ (U' ⇒ O')]).  Its contrapositive is the
@@ -294,7 +300,7 @@ Qed.
   - [Inc_backwards_variant]: the backwards-variant rule of the paper, from
     [Inc_backwards_var]. ([Inc_iterate_zero] is a primitive constructor of
     [Inc_triple], not a derived rule.)
-  - [disjunction_ok]: post-union at a fixed command and precondition.
+  - [disjunction_ϵ]: post-union at a fixed command and precondition.
 *)
 
 (** Erroring iteration: run the star to an intermediate assertion [M], take one
@@ -331,10 +337,11 @@ Proof.
   - intros r Hr; destruct r as [s|s]; cbn in Hr |- *; [ left | right ]; exact Hr.
 Qed.
 
-
+(** Specialize Empty under-approximates for ϵ = ok *)
 Lemma Inc_ok_ffalse: forall P c, ⟦ P ⟧ c ⟦ ok ↑ ffalse ⟧.
 Proof. intros P c. apply eps_to_ok, Inc_Empty_under_approx. Qed.
 
+(** Specialize Empty under-approximates for ϵ = ok *)
 Lemma Inc_err_ffalse: forall P c, ⟦ P ⟧ c ⟦ err ↑ ffalse ⟧.
 Proof. intros P c. apply eps_to_err, Inc_Empty_under_approx. Qed.
 
@@ -404,6 +411,7 @@ Lemma Inc_choice_r_eps: forall P Q c1 c2,
     ⟦ P ⟧ c2 ⟦ ϵ ↑ Q ⟧ -> ⟦ P ⟧ (c1 ⊕ c2) ⟦ ϵ ↑ Q ⟧.
 Proof. intros P Q c1 c2 H. apply Inc_choice_r, H. Qed.
 
+(* Administrative lemma *)
 Lemma Inc_consequence: forall P P' c Q Q',
     (P -->> P') ->
     ⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧ ->
@@ -416,6 +424,7 @@ Proof.
   intros r Hr; destruct r as [s|s]; apply HQ; exact Hr.
 Qed.
 
+(* Administrative lemma *)
 Lemma Inc_err_seq_split: forall P c1 c2 Q1 R1 R2,
     ⟦ P ⟧ c1 ⟦ err ↑ R1 ⟧ ->
     ⟦ P ⟧ c1 ⟦ ok ↑ Q1 ⟧ ->
@@ -444,7 +453,7 @@ Proof.
   rewrite Nat.add_1_r in H. apply eps_to_ok, H.
 Qed.
 
-Lemma disjunction_ok: forall P c Q1 Q2,
+Lemma disjunction_ϵ: forall P c Q1 Q2,
     ⟦ P ⟧ c ⟦ ϵ ↑ Q1 ⟧ ->
     ⟦ P ⟧ c ⟦ ϵ ↑ Q2 ⟧ ->
     ⟦ P ⟧ c ⟦ ϵ ↑ (fun s => Q1 s \/ Q2 s) ⟧.
@@ -461,12 +470,25 @@ Qed.
 
 (** * Semantics *)
 
-(** ** Semantics triple
+(**
+  ** Semantic triple
 
-    O'Hearn, *Definition 1* (Post and Semantic Triples) and *Definition 4*
-    (Interpretation of Specifications), in the equivalent reachability form of
-    *Lemma 3* (Characterization): every state of the result is reachable from
-    some state of the presumption. *)
+The post image of a relation [r] is the function [post(r) : assertion -> assertion]
+defined by
+<<
+  post(r) p = {σ' | ∃ σ ∈ p. (σ, σ') ∈ r}
+>>
+
+The under-approximate triple is then
+<<
+  [p] r [q] holds iff post(r) p ⊇ q
+>>
+Hence the triple can be read semantically as: every state in the postcondition is
+reachable from some state in the precondition, that is,
+<<
+  ∀ σ_q ∈ q. ∃ σ_p ∈ p. (σ_p, σ_q) ∈ r
+>>
+*)
 Definition IncTriple (P: assertion) (c: com) (Q: postassertion) : Prop :=
   forall r, Q r -> exists s, P s /\ cexec s c r.
 
@@ -548,7 +570,7 @@ Lemma inc_symmetry: forall P c Q1 Q2,
     ⟦ P ⟧ c ⟦ ϵ ↑ (fun s => Q1 s \/ Q2 s) ⟧.
 Proof.
     intros P c Q1 Q2 [h1 h2].
-    apply disjunction_ok; assumption.
+    apply disjunction_ϵ; assumption.
 Qed.
 
 Lemma inc_triple_skip: forall P,
@@ -732,7 +754,7 @@ Qed.
 
 (* Substitution I:
             [p] c [ε: q]
-    ———————————————————————————————— ((Free(e) ∪ {x }) ∩ Free(C) = ∅)
+    ———————————————————————————————— ((Free(e) ∪ {x}) ∩ Free(C) = ∅)
         [p[e/x]] c [ε: q[e/x]]
 *)
 Lemma inc_triple_subst_I: forall x e c P Q,
@@ -805,9 +827,12 @@ Qed.
   [P[y/x]] c [ϵ: Q[y/x]]] (same command [c], only the specification
   is renamed).
 
+<<  
+
         [p] c [ε: q]
   ———————————————————————————————— (y ∉ Free(p, C, q))
       ([p] c [ε: q])(y/x)
+>>
 
   The paper only asks for [y] to be fresh, i.e. unused by [p], [C] and
   [q]. But we need more than that, the conclusion keeps the very same [c]
@@ -967,10 +992,10 @@ Proof.
       eapply cexec_cstar_step_iter_error; eauto.
 Qed.
 
-(**
-  [p]Ci [ϵ: qi ], all i ≤ bound*
+(*
+  [p] C^i [ϵ: q_i], all i ≤ bound*
   ─────────────────────────────── (Derived Unrolling Rule)
-  [p]C⋆[ϵ: ∨i ≤bound qi ]
+  [p] C⋆ [ϵ: big-∨_(i ≤ bound) q_i]
 *)
 Lemma inc_triple_derived_unrolling: forall P c (postassert_i: nat -> assertion),
     (forall i, ⟦⟦ P ⟧⟧ (cmd_n i c) ⟦⟦ ϵ ↑ postassert_i i ⟧⟧) ->
@@ -984,7 +1009,7 @@ Proof.
     exists s. split; [ exact HPs | apply cmd_n_to_cstar in EXEC; exact EXEC ].
 Qed.
 
-(**
+(*
   [p] C1 [ϵ: q1]    [p] C2 [ϵ: q2]
   ─────────────────────────────── (Derived Rule of Choice)
   [p] C1 + C2 [ϵ: q1 ∨ q2]
@@ -1006,8 +1031,7 @@ Proof.
 Qed.
 
 
-(** Postassertion-level consequence: strengthen the precondition, shrink the
-    postassertion. *)
+(* Postassertion-level consequence: strengthen the precondition, shrink the postassertion. *)
 Lemma inc_triple_consequence_gen: forall P P' c (Q Q': postassertion),
     (P -->> P') ->
     ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧ ->
@@ -1019,7 +1043,7 @@ Proof.
   exists s. split; [ apply HPP'; exact HPs | exact EXEC ].
 Qed.
 
-(** Strongest normal post of an assignment. *)
+(* Strongest normal post of an assignment. *)
 Lemma inc_triple_assign_sp: forall x a P,
     ⟦⟦ P ⟧⟧ ASSIGN x a
     ⟦⟦ ok ↑ (fun s' => exists s, P s /\ s' = update x (aeval a s) s) ⟧⟧.
@@ -1030,7 +1054,7 @@ Proof.
   exists s. split; [ exact HP | apply cexec_assign ].
 Qed.
 
-(** Strongest normal post of a nondeterministic assignment. *)
+(* Strongest normal post of a nondeterministic assignment. *)
 Lemma inc_triple_nondet_sp: forall x P,
     ⟦⟦ P ⟧⟧ NONDET x
     ⟦⟦ ok ↑ (fun s' => exists s n, P s /\ s' = update x n s) ⟧⟧.
@@ -1041,7 +1065,7 @@ Proof.
   exists s. split; [ exact HP | apply cexec_nondet ].
 Qed.
 
-(** Normal sequencing. *)
+(* Normal sequencing. *)
 Lemma inc_triple_seq_ok: forall P c1 c2 Q1 Q2,
     ⟦⟦ P ⟧⟧ c1 ⟦⟦ ok ↑ Q1 ⟧⟧ ->
     ⟦⟦ Q1 ⟧⟧ c2 ⟦⟦ ok ↑ Q2 ⟧⟧ ->
@@ -1054,7 +1078,7 @@ Proof.
   exists s_pre. split; [ exact HPpre | eapply cexec_seq; eauto ].
 Qed.
 
-(** Erroring sequencing: the error arises in [c1], or after [c1] in [c2]. *)
+(* Erroring sequencing: the error arises in [c1], or after [c1] in [c2]. *)
 Lemma inc_triple_err_seq: forall P c1 c2 Q1 R1 R2,
     ⟦⟦ P ⟧⟧ c1 ⟦⟦ err ↑ R1 ⟧⟧ ->
     ⟦⟦ P ⟧⟧ c1 ⟦⟦ ok ↑ Q1 ⟧⟧ ->
@@ -1071,7 +1095,7 @@ Proof.
     exists s_pre. split; [ exact HP | eapply cexec_seq_error_right; eauto ].
 Qed.
 
-(** Normal choice. *)
+(* Normal choice. *)
 Lemma inc_triple_ok_choice: forall P c1 c2 Q1 Q2,
     ⟦⟦ P ⟧⟧ c1 ⟦⟦ ok ↑ Q1 ⟧⟧ ->
     ⟦⟦ P ⟧⟧ c2 ⟦⟦ ok ↑ Q2 ⟧⟧ ->
@@ -1086,7 +1110,7 @@ Proof.
     exists s0. split; [ exact HP | apply cexec_choice_right; exact EXEC ].
 Qed.
 
-(** Erroring choice. *)
+(* Erroring choice. *)
 Lemma inc_triple_err_choice: forall P c1 c2 R1 R2,
     ⟦⟦ P ⟧⟧ c1 ⟦⟦ err ↑ R1 ⟧⟧ ->
     ⟦⟦ P ⟧⟧ c2 ⟦⟦ err ↑ R2 ⟧⟧ ->
@@ -1101,8 +1125,7 @@ Proof.
     exists s0. split; [ exact HP | apply cexec_choice_right; exact EXEC ].
 Qed.
 
-(** Normal iteration: an [ok] invariant family [P n] (one more successful
-    iteration each step) collects into [∃ m, P m]. *)
+(* Normal iteration: an [ok] invariant family [P n] (one more successful iteration each step) collects into [∃ m, P m]. *)
 Lemma inc_triple_ok_cstar: forall (P: nat -> assertion) c,
     (forall n, ⟦⟦ P n ⟧⟧ c ⟦⟦ ok ↑ P (S n) ⟧⟧) ->
     ⟦⟦ P 0%nat ⟧⟧ CSTAR c ⟦⟦ ok ↑ (fun s => exists m, P m s) ⟧⟧.
@@ -1122,8 +1145,7 @@ Proof.
     apply star_one. unfold step_iter. exact EXEC_step.
 Qed.
 
-(** Erroring iteration: reach an intermediate [M] by normal iterations, then
-    error in one more body execution. *)
+(* Erroring iteration: reach an intermediate [M] by normal iterations, then error in one more body execution. *)
 Lemma inc_triple_err_cstar: forall P c M R,
     ⟦⟦ P ⟧⟧ CSTAR c ⟦⟦ ok ↑ M ⟧⟧ ->
     ⟦⟦ M ⟧⟧ c ⟦⟦ err ↑ R ⟧⟧ ->
@@ -1139,11 +1161,6 @@ Proof.
   exists s_mid. split; [ exact EXEC_star | exact EXEC_c ].
 Qed.
 
-(** Join an [ok]-post and an [err]-post (under the same precondition) into a
-    single tag-distinguishing postassertion: [A] on normal results, [B] on
-    faulting ones.  Semantically immediate — a result in the combined post is
-    either an [ok] state in [A] (reachable by [Hok]) or an [err] state in [B]
-    (reachable by [Herr]). *)
 Lemma inc_triple_combine_ok_err: forall P c A B,
     ⟦⟦ P ⟧⟧ c ⟦⟦ ok ↑ A ⟧⟧ ->
     ⟦⟦ P ⟧⟧ c ⟦⟦ err ↑ B ⟧⟧ ->
@@ -1158,10 +1175,12 @@ Proof.
   - exact (Herr (RError s) HQ).
 Qed.
 
-(** An [ok] and an [err] reachability post combine into an [ϵ] post over
-    their conjunction.  Derived from [inc_triple_combine_ok_err] (which builds
-    the tag-distinguishing post) by shrinking that post to [A //\\ B] via
-    [inc_triple_consequence_gen]. *)
+(*
+  An [ok] and an [err] reachability post combine into an [ϵ] post over
+  their conjunction.  Derived from [inc_triple_combine_ok_err] (which builds
+  the tag-distinguishing post) by shrinking that post to [A //\\ B] via
+  [inc_triple_consequence_gen].
+*)
 Lemma inc_triple_ok_err_to_eps: forall P c A B,
     ⟦⟦ P ⟧⟧ c ⟦⟦ ok ↑ A ⟧⟧ ->
     ⟦⟦ P ⟧⟧ c ⟦⟦ err ↑ B ⟧⟧ ->
@@ -1184,11 +1203,12 @@ Qed.
 
 Module IncSoundness.
 
-(** O'Hearn, *Theorem 5* (Soundness): the relational semantics validates every
-    axiom and inference rule of Fig 2 and Fig 3. *)
-Theorem Inc_triple_sound: forall P c Q,
-    (⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧) ->
-    ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧.
+(** O'Hearn, _Theorem 5_ (Soundness): the relational semantics validates every
+    axiom and inference rule of Fig 2 and Fig 3.
+*)
+Theorem Inc_triple_sound_gen: forall P c (Q: postassertion),
+    (⟦ P ⟧ c ⟦ Q ⟧) ->
+    ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧.
 Proof.
   intros P c Q H. induction H.
   - (* Inc_Empty_under_approx *) apply inc_triple_empty_under_approx.
@@ -1211,6 +1231,14 @@ Proof.
   - (* Inc_subst_II *) apply inc_triple_subst_II; assumption.
 Qed.
 
+(** The statement as O'Hearn writes it: an [ϵ] triple, i.e. a post that does
+    not look at the exit tag. *)
+Corollary Inc_triple_sound: forall P c (Q: assertion),
+    (⟦ P ⟧ c ⟦ ϵ ↑ Q ⟧) ->
+    ⟦⟦ P ⟧⟧ c ⟦⟦ ϵ ↑ Q ⟧⟧.
+Proof.
+  intros P c Q H. apply Inc_triple_sound_gen, H.
+Qed.
 
 (**
   This section relates the two triples: Hoare's over-approximate ⦃ P ⦄ c ⦃ Q ⦄, from
@@ -1222,11 +1250,12 @@ Qed.
   incorrectness logic a bug-finding logic rather than a verification one.
 
   The remaining properties of Fig. 1 live elsewhere in the file: the ∧∨ symmetry is
-  [disjunction_ok] and [inc_symmetry], and the ⇑⇓ symmetry is [Inc_consequence].
+  [disjunction_ϵ] and [inc_symmetry], and the ⇑⇓ symmetry is [Inc_consequence].
 
   Fig. 1. Correctness and Incorrectness Principles
   (O'Hearn, "Incorrectness Logic", POPL 2020, p. 10:3)
 
+<<
                         { - } c { - }
                -----------------------> Predicates
               /                             ↑
@@ -1249,9 +1278,12 @@ Qed.
 
       Principle of    [u]c[u'] ∧ u => o ∧ ¬(u' => o')
         Denial:         => ¬({o}c{o'})
+>>
 
   To understand the Principle of Agreement, consider the following diagram:
-             o                                    o'
+
+<<
+               o                                    o'
         +--------------+                    +--------------+
         |      *       |------------------->|      *       |
         |              |                    |              |
@@ -1262,8 +1294,9 @@ Qed.
         |  +--------+  |                    |  +-----------+-----+      not in o'
         |      u       |                    |       u'     |
         +--------------+                    +--------------+
+>>
 
-  the regions labelled u and u' represent assertions in an under-approximate triple [u] c [u'] and the
+  the regions labelled u and u' represent assertions in an under-approximate triple <<[u] c [u']>> and the
   horizontal lines show the transition relation of the program. We think of the post-condition o'
   as the "test oracle" in a putative Hoare triple {o} c {o'}. If the question "is this a member of o'?"
   fails for a final state obtained by executing the program from a start state satisfying o, then the
@@ -1276,7 +1309,7 @@ Qed.
   Incorrectness logic uses predicates to describe bigger sets, while remaining under-approximate.
 *)
 
-(* Principle of Agreement: [u]c[u'] ∧ (u ⇒ o) ∧ {o} c {o} ⇒ u' ⇒ o' *)
+(* Principle of Agreement: [u]c[u'] ∧ (u ⇒ o) ∧ {o} c {o'} ⇒ u' ⇒ o' *)
 Lemma agreement: forall U c U' O O',
     ⟦ U ⟧ c ⟦ ϵ ↑ U' ⟧ ->
     U -->> O ->
@@ -1327,7 +1360,9 @@ End IncSoundness.
 
 Module IncCompleteness.
 
-(* Surprising *)
+(** [sem_sp c P] is the post image [post(c)P] of _Definition 1_: the outcomes
+    reachable from a [P]-state.  It is the extremal post in both directions —
+    see [post_strongest_over_weakest_under] (*Proposition 8*) below. *)
 Definition sem_sp (c: com) (P: assertion) : postassertion :=
   fun r => exists s, P s /\ cexec s c r.
 
@@ -1409,6 +1444,94 @@ Proof.
   - intros H r HQ. exact (H r HQ).
 Qed.
 
+(** ** Proposition 8
+
+    O'Hearn's *Definition 7* names two extremal posts of a relation [r] at a
+    pre [p]: [StrongestOverPost(r)p] is the least [q] with [{p} r {q}], and
+    [WeakestUnderPost(r)p] is the greatest [q] with [[p] r [q]].
+    *Proposition 8* is that both coincide with the post image itself:
+<<
+  StrongestOverPost(r) = WeakestUnderPost(r) = post(r)
+>>
+
+    Stating the over-approximate half needs a triple at [postassertion] level:
+    [Hoare.triple] fixes the result to be [RNormal], so it only speaks about the
+    ok-fragment, whereas [post] ranges over both exits of Fig 4.  [over_triple]
+    is that generalisation — Hoare's triple is the [ok ↑] instance of it, see
+    [hoare_triple_is_over_triple_ok] below. *)
+Definition over_triple (P: assertion) (c: com) (Q: postassertion) : Prop :=
+  forall s r, P s -> cexec s c r -> Q r.
+
+(** [over_triple] is just [sem_wlp] read forward, so the over-approximate
+    counterpart of [il_triple_iff_sp] is the [sem_sp ⊣ sem_wlp] adjunction. *)
+Lemma over_triple_iff_wlp: forall P c (Q: postassertion),
+    over_triple P c Q <-> (P -->> sem_wlp c Q).
+Proof.
+  intros P c Q. split.
+  - intros H s HP r EXEC. exact (H s r HP EXEC).
+  - intros H s r HP EXEC. exact (H s HP r EXEC).
+Qed.
+
+Lemma over_triple_iff_sp: forall P c (Q: postassertion),
+    over_triple P c Q <-> (sem_sp c P --* Q).
+Proof.
+  intros P c Q.
+  split; intros H.
+  - apply sp_wlp_galois, over_triple_iff_wlp, H.
+  - apply over_triple_iff_wlp, sp_wlp_galois, H.
+Qed.
+
+(** [post] is a valid over-approximate post, and the least one: it is
+    [StrongestOverPost]. *)
+Lemma sem_sp_over_valid: forall P c,
+    over_triple P c (sem_sp c P).
+Proof.
+  intros P c. apply over_triple_iff_sp. intros r Hr. exact Hr.
+Qed.
+
+Lemma sem_sp_over_strongest: forall P c (Q: postassertion),
+    over_triple P c Q ->
+    sem_sp c P --* Q.
+Proof.
+  intros P c Q H. apply over_triple_iff_sp, H.
+Qed.
+
+(** Proposition 8, both halves.  Read as: [sem_sp c P] is the least valid
+    over-post and, at the same time, the greatest valid under-post — the
+    two extremal characterisations pick out the very same predicate, and
+    [sem_sp] *is* [post(c)P] by definition. *)
+Proposition post_strongest_over_weakest_under: forall P c,
+    (* StrongestOverPost(c)P = post(c)P *)
+    (over_triple P c (sem_sp c P) /\ forall Q, over_triple P c Q -> sem_sp c P --* Q)
+    /\
+    (* WeakestUnderPost(c)P = post(c)P *)
+    (⟦⟦ P ⟧⟧ c ⟦⟦ sem_sp c P ⟧⟧ /\ forall Q, ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧ -> Q --* sem_sp c P).
+Proof.
+  intros P c. split; split.
+  - apply sem_sp_over_valid.
+  - apply sem_sp_over_strongest.
+  - apply sem_sp_valid.
+  - apply sem_sp_strongest.
+Qed.
+
+(** The two readings meet only at [post] itself: it is the unique
+    postassertion that is both a valid over-post and a valid under-post of
+    [P] through [c].  This is the sense in which the diagram of Fig. 1 —
+    over-approximation above, under-approximation below — is pinched shut at
+    the image. *)
+Corollary over_and_under_iff_post: forall P c (Q: postassertion),
+    (over_triple P c Q /\ ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧)
+    <-> (forall r, Q r <-> sem_sp c P r).
+Proof.
+  intros P c Q. split.
+  - intros (Hover & Hunder) r. split.
+    + intros HQ. exact (Hunder r HQ).
+    + intros Hsp. exact (sem_sp_over_strongest P c Q Hover r Hsp).
+  - intros Heq. split.
+    + apply over_triple_iff_sp. intros r Hr. apply Heq, Hr.
+    + intros r HQ. apply Heq, HQ.
+Qed.
+
 (** Relation to Hoare.v.  We do *not* redefine the demonic [wlp] from scratch:
     Hoare.v's weakest liberal precondition [Completness.wlp] is exactly this
     [sem_wlp] specialised to the *ok-fragment* postassertion [ok ↑ Q] — the
@@ -1429,6 +1552,19 @@ Proof.
   intros c Q s. unfold Completness.wlp, sem_wlp. split.
   - intros H r EXEC. destruct (H r EXEC) as (s' & -> & HQ). exact HQ.
   - intros H r EXEC. specialize (H r EXEC). destruct r as [s' | s'].
+    + exists s'. split; [ reflexivity | exact H ].
+    + contradiction.
+Qed.
+
+(** Likewise for the triple itself: Hoare's semantic [triple] is [over_triple]
+    at the ok-fragment post, where an error counts as failure. *)
+Lemma hoare_triple_is_over_triple_ok: forall P c Q,
+    (⦃⦃ P ⦄⦄ c ⦃⦃ Q ⦄⦄)
+    <-> over_triple P c (fun r => match r with RNormal s' => Q s' | RError _ => False end).
+Proof.
+  intros P c Q. unfold triple, over_triple. split.
+  - intros H s r HP EXEC. destruct (H s r EXEC HP) as (s' & -> & HQ). exact HQ.
+  - intros H s r EXEC HP. specialize (H s r HP EXEC). destruct r as [s' | s'].
     + exists s'. split; [ reflexivity | exact H ].
     + contradiction.
 Qed.

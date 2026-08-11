@@ -25,6 +25,8 @@ Print Assumptions Inc.IncSoundness.Inc_triple_sound.
 
 Print Assumptions Inc.IncCompleteness.Inc_complete.
 
+Print Assumptions Inc.IncCompleteness.post_strongest_over_weakest_under.
+
 Print Assumptions Inc.SP.vcgen_sound.
 
 
