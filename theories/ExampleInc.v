@@ -1,73 +1,22 @@
-(** * Section 6.1 examples from O'Hearn's "Incorrectness Logic" (POPL 2020).
+(** * Encoding examples of Section 6 in O'Hearn's "Incorrectness Logic".
 
-    These encode the four programs of Figure 5 (loop0, client0, loop1, loop2)
-    and state the Incorrectness Logic triples discussed in §6.1.
+  These encode the four programs of _Figure 5_ (loop0, client0, loop1, loop2)
+  and state the Incorrectness Logic triples discussed in §6.1.
 
-    Procedures are modelled as plain [Definition]s and inlined via [unfold]
-    at call sites — the paper relies on a [principle of reuse] for procedures
-    that we do not yet have in the IMP language. *)
+  Procedures are modelled as plain [Definition]s and inlined at call sites because we do not support yet a _principle of reuse _.
+*)
 
 From Stdlib Require Import Arith ZArith Psatz Bool String List
   Program.Equality FunctionalExtensionality.
 From mathcomp Require Import ssrbool eqtype choice.
+Set Warnings "-notation-incompatible-prefix".
 From mathcomp Require Import finmap.
+Set Warnings "notation-incompatible-prefix".
 From IncLogic Require Import Imp Sequences Hoare Inc.
 
 Local Open Scope string_scope.
 Local Open Scope Z_scope.
 Local Open Scope com_scope.
-
-(** ** Auxiliary [ok]-shaped variants of existing rules.
-
-    The lemmas [inc_triple_seq_normal] and [inc_triple_backwards_variant] in
-    [Inc.v] use the [ε] post, which forces the body to also be reachable in an
-    error case — unprovable for purely-normal bodies like [ASSIGN].  The
-    semantic IL triple is sensitive to the result tag, so we package [ok]-only
-    versions used by the examples below. *)
-
-Lemma inc_triple_seq_ok_ok: forall P c1 c2 Q1 Q2,
-    ⟦⟦ P ⟧⟧  c1 ⟦⟦ ok ↑ Q1 ⟧⟧ ->
-    ⟦⟦ Q1 ⟧⟧ c2 ⟦⟦ ok ↑ Q2 ⟧⟧ ->
-    ⟦⟦ P ⟧⟧  c1 ;; c2 ⟦⟦ ok ↑ Q2 ⟧⟧.
-Proof.
-  intros P c1 c2 Q1 Q2 H1 H2 r HQ2.
-  destruct r as [s' | s']; [ | exfalso; exact HQ2 ].
-  destruct (H2 (RNormal s') HQ2) as (s_mid & HQ1mid & EXEC2).
-  destruct (H1 (RNormal s_mid) HQ1mid) as (s_pre & HPpre & EXEC1).
-  exists s_pre. split; [ exact HPpre | eapply cexec_seq; eauto ].
-Qed.
-
-Lemma inc_triple_consequence_ok: forall P P' c Q Q',
-    (P -->> P') ->
-    ⟦⟦ P ⟧⟧ c ⟦⟦ ok ↑ Q ⟧⟧ ->
-    (Q' -->> Q) ->
-    ⟦⟦ P' ⟧⟧ c ⟦⟦ ok ↑ Q' ⟧⟧.
-Proof.
-  intros P P' c Q Q' HPP' H HQ'Q r HQ'r.
-  destruct r as [s' | s']; [ | exfalso; exact HQ'r ].
-  destruct (H (RNormal s') (HQ'Q _ HQ'r)) as (s & HPs & EXEC).
-  exists s. split; [ apply HPP'; exact HPs | exact EXEC ].
-Qed.
-
-Lemma inc_triple_backwards_variant_ok: forall (P: nat -> assertion) c,
-    (forall n, ⟦⟦ P n ⟧⟧ c ⟦⟦ ok ↑ P (n + 1)%nat ⟧⟧) ->
-    ⟦⟦ P 0%nat ⟧⟧ c ★ ⟦⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧⟧.
-Proof.
-  intros P c H r HQ.
-  destruct r as [s' | s']; [ | exfalso; exact HQ ].
-  destruct HQ as [m HPm].
-  revert s' HPm.
-  induction m as [| k IH]; intros s' HPm.
-  - exists s'. split; [ exact HPm | apply cexec_cstar_done ].
-  - assert (HPk1 : P (k + 1)%nat s') by (rewrite Nat.add_1_r; exact HPm).
-    destruct (H k (RNormal s') HPk1) as (s_pre & HPk_pre & EXEC_step).
-    destruct (IH s_pre HPk_pre) as (s & HP0s & EXEC_iter).
-    exists s. split; [ exact HP0s | ].
-    apply cexec_cstar_iff_star.
-    apply cexec_cstar_iff_star in EXEC_iter.
-    eapply star_trans; [ exact EXEC_iter | ].
-    apply star_one. unfold step_iter. exact EXEC_step.
-Qed.
 
 (** ** loop1 — Fig 5, lines 18-24.
 
@@ -96,8 +45,8 @@ Proof.
   unfold loop1.
   pose (Pn := fun (n: nat) (s: store) =>
                 s "x" = Z.of_nat n /\ "x" \in domf s).
-  refine (inc_triple_seq_ok_ok _ (ASSIGN "x" (CONST 0)) (CSTAR loop1_body)
-                               (Pn 0%nat) _ _ _).
+  refine (inc_triple_seq_ok _ (ASSIGN "x" (CONST 0)) (CSTAR loop1_body)
+                            (Pn 0%nat) _ _ _).
   - (* [true] x := 0 [ok: P 0] *)
     intros r HQ. destruct r as [s' | s']; [ | exfalso; exact HQ ].
     destruct HQ as [Hx0 Hdom]. unfold Pn in *. cbn in Hx0.
@@ -105,10 +54,9 @@ Proof.
     replace s' with (update "x" (aeval (CONST 0) s') s') at 2.
     + apply cexec_assign.
     + cbn [aeval]. rewrite <- Hx0. apply update_get. exact Hdom.
-  - apply inc_triple_consequence_ok with
-        (P := Pn 0%nat) (Q := fun s : store => exists m, Pn m s).
+  - eapply inc_triple_consequence_gen with (P := Pn 0%nat).
     + unfold aimp. intros s HP0. exact HP0.
-    + apply inc_triple_backwards_variant_ok.
+    + apply inc_triple_ok_cstar with (P := Pn).
       intros n. unfold loop1_body.
       intros r HQ. destruct r as [s' | s']; [ | exfalso; exact HQ ].
       destruct HQ as [Hxv Hdom_s']. unfold Pn in *.
@@ -121,9 +69,10 @@ Proof.
         ** apply cexec_assign.
         ** cbn [aeval]. rewrite update_same.
            rewrite update_shadow.
-           replace (Z.of_nat n + 1) with (Z.of_nat (n + 1)) by lia.
+           replace (Z.of_nat n + 1) with (Z.of_nat (S n)) by lia.
            rewrite <- Hxv. apply update_get. exact Hdom_s'.
-    + unfold aimp. intros s [Hxnn Hdom].
+    + intros r HQ. destruct r as [s | s]; [ | exfalso; exact HQ ].
+      destruct HQ as [Hxnn Hdom].
       exists (Z.to_nat (s "x")). unfold Pn. split; [ | exact Hdom ].
       rewrite Z2Nat.id; [ reflexivity | exact Hxnn ].
 Qed.
@@ -139,12 +88,11 @@ Lemma loop1_achieves1 :
   ⟦⟦ ok ↑ (fun s : store => (s "x" = 0 \/ s "x" = 1 \/ s "x" = 2 \/ s "x" = 3)
                             /\ "x" \in domf s) ⟧⟧.
 Proof.
-  apply inc_triple_consequence_ok with
-    (P := fun _ : store => True)
-    (Q := fun s : store => 0 <= s "x" /\ "x" \in domf s).
+  eapply inc_triple_consequence_gen with (P := fun _ : store => True).
   - unfold aimp; auto.
   - exact loop1_achieves2.
-  - unfold aimp. intros s [Hcase Hdom]. split; [ | exact Hdom ].
+  - intros r HQ. destruct r as [s | s]; [ | exfalso; exact HQ ].
+    destruct HQ as [Hcase Hdom]. split; [ | exact Hdom ].
     destruct Hcase as [H | [H | [H | H]]]; rewrite H; lia.
 Qed.
 

@@ -1,6 +1,8 @@
 From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality FunctionalExtensionality.
 From mathcomp Require Import ssrbool eqtype choice.
+Set Warnings "-notation-incompatible-prefix".
 From mathcomp Require Import finmap.
+Set Warnings "notation-incompatible-prefix".
 From IncLogic Require Import Imp Sequences Hoare Inc.
 
 (** * Sufficient Incorrectness Logic (SIL)
@@ -24,6 +26,11 @@ From IncLogic Require Import Imp Sequences Hoare Inc.
 
     [Q] is a [postassertion] throughout, so a single system uniformly handles
     normal and erroneous outcomes (exactly as in [Inc.v]). *)
+
+(** Level 90, not the level 0 Rocq suggests for closed notations: at level 0 a
+    triple is a legal application argument, so [⟪ P ⟫ SKIP ⟪ Q ⟫] re-parses as
+    [SKIP] applied to a nested triple.  See the same note in [Inc.v]. *)
+Set Warnings "-closed-notation-not-level-0".
 
 Reserved Notation "⟪ P ⟫ c ⟪ 'ok' ↑ Q ⟫" (at level 90, c at next level).
 

@@ -1,6 +1,8 @@
 From Stdlib Require Import Arith ZArith Psatz Bool String List Program.Equality FunctionalExtensionality.
 From mathcomp Require Import ssrbool eqtype choice.
+Set Warnings "-notation-incompatible-prefix".
 From mathcomp Require Import finmap.
+Set Warnings "notation-incompatible-prefix".
 From IncLogic Require Import Imp Sequences.
 
 Local Open Scope string_scope.
@@ -168,6 +170,11 @@ Ltac Tauto :=
   This is a "weak" logic, meaning that it does not guarantee termination
   of the command [c].  What is guaranteed is that if [c] terminates,
   then its final store satisfies postcondition [Q]. *)
+
+(** Level 90, not the level 0 Rocq suggests for closed notations: at level 0 a
+    triple is a legal application argument, so [⦃ P ⦄ SKIP ⦃ P ⦄] re-parses as
+    [SKIP] applied to a nested triple.  See the same note in [Inc.v]. *)
+Set Warnings "-closed-notation-not-level-0".
 
 Reserved Notation "⦃ P ⦄ c ⦃ Q ⦄" (at level 90, c at next level).
 

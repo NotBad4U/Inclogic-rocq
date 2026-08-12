@@ -3,7 +3,12 @@ From Stdlib Require Import RelationClasses Morphisms Setoid.
 From IncLogic Require Import Sequences RelKleene.
 From HB Require Import structures.
 From mathcomp Require Import ssrfun ssrbool eqtype choice.
+(** [finmap] declares its [fset] comprehensions in prefix-incompatible families;
+    the warning concerns the library's own notations, not ours, so it is muted
+    only across this import and re-enabled straight after. *)
+Set Warnings "-notation-incompatible-prefix".
 From mathcomp Require Import finmap.
+Set Warnings "notation-incompatible-prefix".
 
 Local Open Scope string_scope.
 Local Open Scope Z_scope.
@@ -12,6 +17,11 @@ Local Open Scope list_scope.
 (** * 0.  [Choice]/[Countable] instances for [ascii] and [string]
 
     Required so that [{fmap string -> Z}] is a well-typed finite map. *)
+
+(** Building the [eqType]/[choiceType]/[countType] stack with HB makes it
+    re-register projections mathcomp's own [choice] instances already provide;
+    HB reports each as redundant and ignores it, which is harmless here. *)
+Set Warnings "-redundant-canonical-projection".
 
 Definition ascii_eqb (a b : ascii) : bool :=
   if ascii_dec a b then true else false.
@@ -41,6 +51,8 @@ Lemma string_pickleK :
 Proof. intro s. rewrite string_of_list_ascii_of_string. reflexivity. Qed.
 HB.instance Definition _ := PCanHasChoice string_pickleK.
 HB.instance Definition _ := PCanIsCountable string_pickleK.
+
+Set Warnings "redundant-canonical-projection".
 
 (** *  The IMP language *)
 
@@ -212,9 +224,12 @@ Notation "'IF' b 'THEN' c1 'ELSE' c2 'END'" :=
      c1 at level 89,
      c2 at level 89) : com_scope.
 
+(* Same level and argument levels as the [ELSE] form above: the two share the
+    prefix [IF _ THEN _], and Rocq requires a common prefix to be parsed at
+    identical levels, else only one of the two notations works. *)
 Notation "'IF' b 'THEN' c1 'END'" :=
   (IF b THEN c1 ELSE SKIP END)
-  (at level 90, right associativity,
+  (at level 89, right associativity,
    b at level 99,
    c1 at level 89,
    only parsing) : com_scope.

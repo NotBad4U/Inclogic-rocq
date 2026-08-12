@@ -6,6 +6,7 @@ theories/Hoare.v
 theories/Inc.v
 theories/Sil.v
 theories/ExampleInc.v
+theories/ExampleIncSP.v
 theories/KatInc.v
 theories/KatIncImp.v
 theories/Assumptions.v

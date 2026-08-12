@@ -119,7 +119,10 @@ Qed.
 (** * Some program equivalences *)
 
 (** two programs are said to be equivalent if they have the same semantics *)
-Notation "p ~ q" := (bstep p ≡ bstep q) (at level 80). 
+(** [≃] rather than [~]: Stdlib's binary-[positive] literals already use [_ ~ 1]
+    and [_ ~ 0] at level 7, so a [_ ~ _] notation shares their prefix at an
+    incompatible level and one of the two stops parsing. *)
+Notation "p ≃ q" := (bstep p ≡ bstep q) (at level 80).
 
 (** ad-hoc simplification tactic *)
 Ltac simp := unfold bstep; fold bstep.
@@ -127,23 +130,23 @@ Ltac simp := unfold bstep; fold bstep.
 
 (** ** denesting nested loops *)
 Lemma two_loops b p: 
-  whl b (whl b p)  ~  whl b p.
+  whl b (whl b p)  ≃  whl b p.
 Proof. simp. kat. Qed.
 
 (** ** folding a loop *)
 Lemma fold_loop b p: 
-  whl b (p ;; ite b p skp)  ~  
+  whl b (p ;; ite b p skp)  ≃  
   whl b p.
 Proof. simp. kat. Qed.
 
 (** ** eliminating deadcode *)
 Lemma dead_code b p q r: 
-  (whl b p ;; ite b q r)  ~  
+  (whl b p ;; ite b q r)  ≃  
   (whl b p ;; r).
 Proof. simp. kat. Qed.
 
 Lemma dead_code' a b p q r: 
-  (whl (a ⊔ b) p ;; ite b q r)  ~ 
+  (whl (a ⊔ b) p ;; ite b q r)  ≃ 
   (whl (a ⊔ b) p ;; r).
 Proof. simp. kat. Qed.
 
@@ -166,7 +169,7 @@ Hypothesis update_comm: forall x y i j s, x<>y -> update x i (update y j s) = up
 (** ** stacking assignations *)
 
 Lemma aff_stack x e f:
-  (x <- e ;; x <- f)  ~  
+  (x <- e ;; x <- f)  ≃  
   (x <- esubst x e f).
 Proof.
   simp. rewrite tfrel_comp.
@@ -177,7 +180,7 @@ Qed.
 
 (** ** removing duplicates *)
 
-Lemma aff_idem x e: fresh x e -> (x <- e ;; x <- e)  ~  (x <- e). 
+Lemma aff_idem x e: fresh x e -> (x <- e ;; x <- e)  ≃  (x <- e). 
 Proof. 
   intro. rewrite aff_stack. 
   intros s s'. cbv. rewrite (H (e s)). tauto.
@@ -186,7 +189,7 @@ Qed.
 (** ** commuting assignations *)
 
 Lemma aff_comm x y e f: x<>y  -> fresh y e ->  
-  (x <- e ;; y <- f)  ~ (y <- esubst x e f ;; x <- e).
+  (x <- e ;; y <- f)  ≃ (y <- esubst x e f ;; x <- e).
 Proof.
   intros Hx Hy. simp. rewrite 2tfrel_comp. apply tfrel_weq; intro s.
   rewrite update_comm by congruence. 
@@ -203,7 +206,7 @@ Qed.
 
 Lemma aff_ite x e t p q: 
   (x <- e ;; ite t p q)  
-  ~ 
+  ≃ 
   (ite (subst x e t) (x <- e ;; p) (x <- e ;; q)).
 Proof.
   simp. 
