@@ -22,8 +22,8 @@
   of results reachable from [P], the two forms are the two directions of one inclusion,
 
 <<
-    Hoare          ⦃⦃ P ⦄⦄ c ⦃⦃ Q ⦄⦄    is    post(c)(P) ⊆ Q     (over-approximate)
-    Incorrectness  ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧    is    Q ⊆ post(c)(P)     (under-approximate)
+    Hoare          ⦃⦃ P ⦄⦄ c ⦃⦃ Q ⦄⦄    is   post(c)(P) ⊆ Q     (over-approximate)
+    Incorrectness  ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧   is   Q ⊆ post(c)(P)     (under-approximate)
 >>
 
   (in [triple] the right-hand side is really the normal results in [Q], since Hoare here
@@ -283,6 +283,8 @@ Qed.
   their justification never inspects how the command exited.  That is general,
   but inconvenient in practice: the exit condition has to be spelled out at
   every use.  The lemmas below fix a tag (e.g [ϵ = ok]) once and for all.
+  - [Inc_post_weaken]: Consequence rule restricted to post
+  - [Inc_pre_strengthen]: Consequence rule restricted to pre
   - [Inc_err_cstar]: the erroring iteration rule combining [Inc_iterate_step] and [Inc_ok_seq].
   - [Inc_combine_ok_err]: the rule for combining [[P]c[ok↑A]] and [[P]c[err↑B]] triples into [[P]c[ok↑A][err↑B]].
   - [Inc_ok_ffalse], [Inc_err_ffalse]: the empty post in each tag shape.
@@ -302,6 +304,26 @@ Qed.
     [Inc_triple], not a derived rule.)
   - [disjunction_ϵ]: post-union at a fixed command and precondition.
 *)
+
+(** Post-weakening (consequence keeping the precondition fixed). *)
+Lemma Inc_post_weaken: forall P c (Q Q': postassertion),
+  ⟦ P ⟧ c ⟦ Q ⟧ -> (Q' --* Q) -> ⟦ P ⟧ c ⟦ Q' ⟧.
+Proof.
+  intros P c Q Q' H Hsub.
+  eapply Inc_consequence_gen; [ intros s Hs; exact Hs | exact H | exact Hsub ].
+Qed.
+
+
+(** Post-strengthening (consequence keeping the postcondition fixed). *)
+Lemma Inc_pre_strengthen: forall P P' c Q,
+  ⟦ P ⟧ c ⟦ Q ⟧ -> (P -->> P') -> ⟦ P' ⟧ c ⟦ Q ⟧.
+Proof.
+  intros P P' c Q H Hsub.
+  eapply Inc_consequence_gen.
+  exact Hsub.
+  exact H.
+  intros r HQ. refine HQ.
+Qed.
 
 (** Erroring iteration: run the star to an intermediate assertion [M], take one
     further iteration of [c] that errors, and fold that extra iteration back
@@ -1499,7 +1521,7 @@ Qed.
 (** Proposition 8, both halves.  Read as: [sem_sp c P] is the least valid
     over-post and, at the same time, the greatest valid under-post — the
     two extremal characterisations pick out the very same predicate, and
-    [sem_sp] *is* [post(c)P] by definition. *)
+    [sem_sp] is [post(c)P] by definition. *)
 Proposition post_strongest_over_weakest_under: forall P c,
     (* StrongestOverPost(c)P = post(c)P *)
     (over_triple P c (sem_sp c P) /\ forall Q, over_triple P c Q -> sem_sp c P --* Q)
@@ -1571,15 +1593,23 @@ Qed.
 
 (** ** Syntactic strongest postconditions
 
-    [spo c P] / [spe c P] are the strongest normal / erroring postconditions
-    of [c] from [P], expressed directly through the operational semantics.
-    They are the two post-images of O'Hearn's _Definition 1_, taken over the
-    [ok] and [er] relations of Fig 4.  By _Proposition 8_ the post operator is
-    at once the strongest over-approximate and the weakest under-approximate
-    post (*Definition 7*), which is why weakening from it suffices below. *)
+[spo c P] / [spe c P] are the strongest normal / erroring postconditions
+of [c] from [P], expressed directly through the operational semantics.
+They are the two post-images of O'Hearn's _Definition 1_, taken over the
+[ok] and [er] relations of Fig 4.  By _Proposition 8_ the post operator is
+at once the strongest over-approximate and the weakest under-approximate
+post (_Definition 7_), which is why weakening from it suffices below.
+
+<<
+  post(r)p = { σ' | ∃σ ∈ p. (σ, σ') ∈ r}
+>>
+*)
+
+(** Strongest postconditions for normal execution _ok_ exit tag *)
 Definition spo (c: com) (P: assertion) : assertion :=
   fun s' => exists s, P s /\ s =[ c ]=> RNormal s'.
 
+(** Strongest postconditions for _error_ exit tag *)
 Definition spe (c: com) (P: assertion) : assertion :=
   fun s' => exists s, P s /\ s =[ c ]=> RError s'.
 
@@ -1591,13 +1621,6 @@ Fixpoint spo_iter (c: com) (P: assertion) (n: nat) : assertion :=
   | S k => spo c (spo_iter c P k)
   end.
 
-(** Pure post-weakening (consequence keeping the precondition fixed). *)
-Lemma Inc_post_weaken: forall P c (Q Q': postassertion),
-  Inc_triple P c Q -> (Q' --* Q) -> Inc_triple P c Q'.
-Proof.
-  intros P c Q Q' H Hsub.
-  eapply Inc_consequence_gen; [ intros s Hs; exact Hs | exact H | exact Hsub ].
-Qed.
 
 (** An [ok]/[err] triple whose post is empty is vacuously derivable. *)
 Lemma Inc_ok_empty: forall P c (A: assertion),
@@ -1626,7 +1649,7 @@ Qed.
 
 (** Every state reachable by [star]-iterations is captured by some [spo_iter]. *)
 Lemma spo_star_complete: forall c s s',
-  star (step_iter c) s s' -> forall P, P s -> exists n, spo_iter c P n s'.
+  star (step_iter c) s s' -> forall P, P s -> exists n, (spo_iter c P n) s'.
 Proof.
   intros c s s' HStar. induction HStar as [a | a b d Hab Hbd IH]; intros P HP.
   - exists 0%nat. exact HP.
@@ -1635,99 +1658,74 @@ Proof.
     + exists (S n). rewrite <- spo_iter_shift. exact Hn.
 Qed.
 
+
+(** Discharge vacuous cases *)
+Ltac sp_empty :=
+  solve [ first [ apply Inc_ok_empty | apply Inc_err_empty ];
+          intros ? (? & ? & HX); inversion HX ].
+
+(** apply [rule], then show the strongest post is contained in the rule's post by inverting one step of the operational semantics *)
+Ltac sp_weaken rule :=
+  eapply Inc_post_weaken;
+  [ eapply rule
+  | intros [?|?]; cbn; try tauto;
+    intros (? & ? & HX); inversion HX; subst;
+    unfold spo, spe, aor, aand, atrue in *; eauto 8 ].
+
+Lemma spo_cstar_der: forall c P,
+  (forall P', ⟦ P' ⟧ c ⟦ ok ↑ spo c P' ⟧) ->
+  ⟦ P ⟧ CSTAR c ⟦ ok ↑ spo (CSTAR c) P ⟧.
+Proof.
+  intros c P IH.
+  eapply Inc_post_weaken.
+  { apply (Inc_backwards_var (spo_iter c P) c). intros n. exact (IH _). }
+  intros [s|s]; cbn; try tauto.
+  intros (s0 & HP & HX). apply cexec_cstar_iff_star in HX.
+  eapply spo_star_complete; eauto.
+Qed.
+
+
 (** ** Strongest-post derivability: the heart of completeness.
 
-    For every command [c] and pre [P], the strongest normal post [spo c P]
-    and erroring post [spe c P] are *derivable*.  Proven by induction on [c],
-    using the tag-tracking rules. *)
+  For every command [c] and pre [P], the strongest normal post [spo c P]
+  and erroring post [spe c P] are *derivable*.  Proven by induction on [c],
+  using the tag-tracking rules.
+*)
 Lemma sp_der: forall c P,
   ⟦ P ⟧ c ⟦ ok ↑ spo c P ⟧ /\ ⟦ P ⟧ c ⟦ err ↑ spe c P ⟧.
 Proof.
-  induction c; intros P; split.
-  - (* SKIP, ok *)
-    eapply Inc_post_weaken; [ apply (Inc_triple_skip P) | ].
-    intros r; destruct r as [s|s]; cbn; [ | tauto ].
-    intros [s0 [HP HX]]. inversion HX; subst. exact HP.
-  - (* SKIP, err *)
-    apply Inc_err_empty. intros s [s0 [HP HX]]. inversion HX.
-  - (* ERROR, ok *)
-    apply Inc_ok_empty. intros s [s0 [HP HX]]. inversion HX.
-  - (* ERROR, err *)
-    eapply Inc_post_weaken; [ apply (Inc_error P) | ].
-    intros r; destruct r as [s|s]; cbn; [ tauto | ].
-    intros [s0 [HP HX]]. inversion HX; subst. exact HP.
-  - (* ASSIGN, ok *)
-    eapply Inc_post_weaken; [ apply (Inc_assign_sp x a P) | ].
-    intros r; destruct r as [s|s]; cbn; [ | tauto ].
-    intros [s0 [HP HX]]. inversion HX; subst. exists s0. split; [ exact HP | reflexivity ].
-  - (* ASSIGN, err *)
-    apply Inc_err_empty. intros s [s0 [HP HX]]. inversion HX.
-  - (* NONDET, ok *)
-    eapply Inc_post_weaken; [ apply (Inc_nondet_sp x P) | ].
-    intros r; destruct r as [s|s]; cbn; [ | tauto ].
-    intros [s0 [HP HX]]. inversion HX; subst. exists s0, n. split; [ exact HP | reflexivity ].
-  - (* NONDET, err *)
-    apply Inc_err_empty. intros s [s0 [HP HX]]. inversion HX.
-  - (* ASSUME, ok *)
-    eapply Inc_post_weaken; [ apply (Inc_assume P b) | ].
-    intros r; destruct r as [s|s]; cbn; [ | tauto ].
-    intros [s0 [HP HX]]. inversion HX; subst. split; assumption.
-  - (* ASSUME, err *)
-    apply Inc_err_empty. intros s [s0 [HP HX]]. inversion HX.
+  induction c; intros P; split; try sp_empty.
+  - (* SKIP, ok *)   sp_weaken Inc_triple_skip.
+  - (* ERROR, err *) sp_weaken Inc_error.
+  - (* ASSIGN, ok *) sp_weaken Inc_assign_sp.
+  - (* NONDET, ok *) sp_weaken Inc_nondet_sp.
+  - (* ASSUME, ok *) sp_weaken Inc_assume.
   - (* SEQ, ok *)
     destruct (IHc1 P) as [Hok1 _]. destruct (IHc2 (spo c1 P)) as [Hok2 _].
-    eapply Inc_post_weaken; [ exact (Inc_ok_seq P c1 c2 (spo c1 P) _ Hok1 Hok2) | ].
-    intros r; destruct r as [s|s]; cbn; [ | tauto ].
-    intros [s0 [HP HX]]. inversion HX; subst.
-    exists s'. split; [ exists s0; split; assumption | assumption ].
+    sp_weaken (Inc_ok_seq _ _ _ _ _ Hok1 Hok2).
   - (* SEQ, err *)
     destruct (IHc1 P) as [Hok1 Herr1]. destruct (IHc2 (spo c1 P)) as [_ Herr2].
-    eapply Inc_post_weaken;
-      [ apply (Inc_err_seq_split P c1 c2 (spo c1 P) (spe c1 P) (spe c2 (spo c1 P)) Herr1 Hok1 Herr2) | ].
-    intros r; destruct r as [s|s]; cbn; [ tauto | ].
-    intros [s0 [HP HX]]. inversion HX; subst.
-    + left. exists s0. split; assumption.
-    + right. exists s'. split; [ exists s0; split; assumption | assumption ].
+    sp_weaken (Inc_err_seq_split _ _ _ _ _ _ Herr1 Hok1 Herr2).
   - (* CHOICE, ok *)
     destruct (IHc1 P) as [Hok1 _]. destruct (IHc2 P) as [Hok2 _].
-    eapply Inc_post_weaken; [ apply (Inc_ok_choice P c1 c2 (spo c1 P) (spo c2 P) Hok1 Hok2) | ].
-    intros r; destruct r as [s|s]; cbn; [ | tauto ].
-    intros [s0 [HP HX]]. inversion HX; subst.
-    + left. exists s0. split; assumption.
-    + right. exists s0. split; assumption.
+    sp_weaken (Inc_ok_choice _ _ _ _ _ Hok1 Hok2).
   - (* CHOICE, err *)
     destruct (IHc1 P) as [_ Herr1]. destruct (IHc2 P) as [_ Herr2].
-    eapply Inc_post_weaken; [ apply (Inc_err_choice P c1 c2 (spe c1 P) (spe c2 P) Herr1 Herr2) | ].
-    intros r; destruct r as [s|s]; cbn; [ tauto | ].
-    intros [s0 [HP HX]]. inversion HX; subst.
-    + left. exists s0. split; assumption.
-    + right. exists s0. split; assumption.
+    sp_weaken (Inc_err_choice _ _ _ _ _ Herr1 Herr2).
   - (* CSTAR, ok *)
-    assert (Hok : ⟦ P ⟧ CSTAR c ⟦ ok ↑ (fun s => exists m, spo_iter c P m s) ⟧).
-    { apply (Inc_backwards_var (spo_iter c P) c).
-      intros n. destruct (IHc (spo_iter c P n)) as [Hn _]. exact Hn. }
-    eapply Inc_post_weaken; [ exact Hok | ].
-    intros r; destruct r as [s|s]; cbn; [ | tauto ].
-    intros [s0 [HP HX]]. apply cexec_cstar_iff_star in HX.
-    eapply spo_star_complete; eauto.
+    apply spo_cstar_der. intros P'. exact (proj1 (IHc P')).
   - (* CSTAR, err *)
-    assert (Hok : ⟦ P ⟧ CSTAR c ⟦ ok ↑ spo (CSTAR c) P ⟧).
-    { eapply Inc_post_weaken.
-      { apply (Inc_backwards_var (spo_iter c P) c).
-        intros n. destruct (IHc (spo_iter c P n)) as [Hn _]. exact Hn. }
-      intros r; destruct r as [s|s]; cbn; [ | tauto ].
-      intros [s0 [HP HX]]. apply cexec_cstar_iff_star in HX.
-      eapply spo_star_complete; eauto. }
+    assert (Hok : ⟦ P ⟧ CSTAR c ⟦ ok ↑ spo (CSTAR c) P ⟧)
+      by (apply spo_cstar_der; intros P'; exact (proj1 (IHc P'))).
     destruct (IHc (spo (CSTAR c) P)) as [_ Herr].
-    eapply Inc_post_weaken;
-      [ apply (Inc_err_cstar P c (spo (CSTAR c) P) (spe c (spo (CSTAR c) P)) Hok Herr) | ].
-    intros r; destruct r as [s|s]; cbn; [ tauto | ].
-    intros [s0 [HP HX]]. apply cexec_cstar_err_iff in HX.
-    destruct HX as [s' [HStar HcErr]].
+    eapply Inc_post_weaken; [ exact (Inc_err_cstar _ _ _ _ Hok Herr) | ].
+    intros [s|s]; cbn; try tauto.
+    intros (s0 & HP & HX). apply cexec_cstar_err_iff in HX.
+    destruct HX as (s' & HStar & HcErr).
     exists s'. split; [ exists s0; split; [ exact HP | apply cexec_cstar_iff_star; exact HStar ] | exact HcErr ].
 Qed.
 
-(** O'Hearn, *Theorem 6* (Completeness): every true triple is provable.  As in
+(** O'Hearn, _Theorem 6_ (Completeness): every true triple is provable.  As in
     the article, the argument runs by induction on the command through the
     strongest posts, using the Backwards Variant rule for iteration. *)
 Theorem Inc_complete:
@@ -1747,7 +1745,60 @@ Proof. intros P c Q H. exact (Inc_complete P c _ H). Qed.
 
 End IncCompleteness.
 
-(** * Strongest Postconditions Calculus  *)
+(** * Strongest Postconditions Calculus  
+
+Equations:
+<<
+SPₑ(C, p) = post(⟦C⟧ₑ)(p)
+[p] C [ε : q]  ⇔  q ⊆ SPₑ(C, p)
+
+SPₒₖ(skip, p) = p
+SPₑᵣ(skip, p) = false
+
+SPₒₖ(error(), p) = false
+SPₑᵣ(error(), p) = p
+
+SPₒₖ(assume(B), p) = p ∧ B
+SPₑᵣ(assume(B), p) = false
+
+SPₒₖ(x := e, p) = ∃x′. p[x′/x] ∧ x = e[x′/x]
+SPₑᵣ(x := e, p) = false
+
+SPₑᵣ(x := nondet(), p) = false
+SPₒₖ(x := nondet(), p) = ∃x′. p[x′/x]
+
+
+SPₒₖ(C₁ + C₂, p) = SPₒₖ(C₁, p) ∨ SPₒₖ(C₂, p)
+SPₑᵣ(C₁ + C₂, p) = SPₑᵣ(C₁, p) ∨ SPₑᵣ(C₂, p)
+
+SPₒₖ(C₁ ; C₂, p) = SPₒₖ(C₂, SPₒₖ(C₁, p))
+SPₑᵣ(C₁ ; C₂, p) = SPₑᵣ(C₁, p) ∨ SPₑᵣ(C₂, SPₒₖ(C₁, p))
+
+SPₑ(C*, p) = ⋁ₙ≥₀ SPₑ(Cⁿ, p)
+
+SPₑ(C(y/x), p) = q ⇒ SPₑ(local x.C, p) ⊇ ∃y.q
+
+SPₒₖ(assert(B), p) = p ∧ B
+SPₑᵣ(assert(B), p) = p ∧ ¬B
+
+[p] C [ε : q] ⇔ q ⊆ SPₑ(C, p) 
+U ⊆ SPₑ(C, p) ⇒ [p] C [ε : U]
+>>
+
+<<
+We can derive the SP equations for [WHILE] and [IF] command:
+F(X) = SPₒₖ(C, X ∧ B)
+F⁰(p) = p
+Fⁿ⁺¹(p) = F(Fⁿ(p))
+
+SPₒₖ(while B do C, p) = ⋁ₙ≥₀ (Fⁿ(p) ∧ ¬B)
+SPₑᵣ(while B do C, p) = ⋁ₙ≥₀ SPₑᵣ(C, Fⁿ(p) ∧ B)
+
+SPₑ(if B then C₁ else C₂, p) = SPₑ(C₁, p ∧ B) ∨ SPₑ(C₂, p ∧ ¬B)
+SPₒₖ(if B then C₁ else C₂, p) = SPₒₖ(C₁, p ∧ B) ∨ SPₒₖ(C₂, p ∧ ¬B)
+SPₑᵣ(if B then C₁ else C₂, p) = SPₑᵣ(C₁, p ∧ B) ∨ SPₑᵣ(C₂, p ∧ ¬B)
+>>
+*)
 
 Module SP.
 
@@ -1776,8 +1827,10 @@ Module SP.
 
   (* Strongest Liberal Postcondition for normal executions *)
 
-  (** The exact reachable post over every result tag at once. *)
-  (** Strongest [ok]-post: the exact reachable store after *normal* termination. *)
+  (**
+    The exact reachable post over every result tag at once.
+    Strongest [ok]-post: the exact reachable store after _normal_ termination.
+  *)
   Fixpoint slp_ok (P: assertion) (c: acom) : assertion :=
   match c with
   | SKIP => fun s => P s
@@ -1804,7 +1857,7 @@ Module SP.
   | CSTAR Inv c => ffalse  (* see note: loop error case is handled via the invariant *)
   end.
 
-  (** The strongest *postassertion*: it inspects the result tag and returns the
+  (** The strongest _postassertion_: it inspects the result tag and returns the
       [ok] post on normal termination and the [err] post on faulting. This is
       the [result -> Prop] value you asked for — built by matching on the
       postassertion's own argument [r], not by running [cexec] (which is a
