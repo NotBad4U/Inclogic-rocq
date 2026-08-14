@@ -13,6 +13,11 @@
   ## Indicate the relative location of your _CoqProject
   coqproject = "_CoqProject";
 
+  ## Extra packages to have around.  The toolbox already puts `coq-lsp` and
+  ## the Coq-era `vscoq-language-server` in the shell; this adds the Rocq one,
+  ## which is what the VsRocq editor extension talks to.
+  buildInputs = [ "vsrocq-language-server" ];
+
   ## select an entry to build in the following `bundles` set
   ## defaults to "default"
   ## "9.2" is the latest stable Rocq release; the older bundles are kept for

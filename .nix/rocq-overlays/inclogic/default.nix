@@ -10,6 +10,7 @@
   mathcomp-boot,
   mathcomp-finmap,
   relation-algebra,
+  rocq-elpi,
   version ? null,
 }:
 
@@ -28,6 +29,7 @@ mkRocqDerivation {
     mathcomp-boot
     mathcomp-finmap
     relation-algebra
+    rocq-elpi
   ];
 
   ## `Makefile.conf` and `.Makefile.d` are not in the repository: the

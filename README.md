@@ -1,6 +1,6 @@
 # Mechanized Incorrectness Logic in Rocq
 
-A machine-checked development, in the [Rocq Prover](https://rocq-prover.org) (Coq 9.0), of
+A machine-checked development, in the [Rocq Prover](https://rocq-prover.org) (Rocq 9.2), of
 **Incorrectness Logic** (IL) and related theories, all built on top of a single non-deterministic
 IMP language with an explicit `error` command and Kleene Algebra, kept as faithful as possible to
 the original papers nothing weakened for the sake of the mechanisation.
@@ -51,13 +51,14 @@ their *semantic* counterparts. Soundness and completeness theorems connect the t
 | `rocq-mathcomp-ssreflect` | 2.6.0 | 2.5.0 |
 | `rocq-mathcomp-finmap` | 2.2.4 | 2.2.2 |
 | `rocq-relation-algebra` (for `KatInc.v` / `KatIncImp.v`) | 1.9.0 | 1.8.0 |
+| `rocq-elpi` (for `IncElpi.v` / `ExampleIncElpi.v`) | 3.5.0 | |
 
 ### Setup with opam
 
 ```sh
 opam repo add rocq-released https://rocq-prover.org/opam/released
 opam install rocq-prover rocq-mathcomp-ssreflect rocq-mathcomp-finmap \
-             rocq-hierarchy-builder rocq-relation-algebra
+             rocq-hierarchy-builder rocq-relation-algebra rocq-elpi
 ```
 
 ### Setup with Nix
@@ -74,7 +75,8 @@ nix-env -iA nixpkgs.cachix && cachix use coq && cachix use coq-community && cach
 Then, from the root of the repository:
 
 ```sh
-nix-shell                       # dev shell with rocq, mathcomp, relation-algebra, coq-lsp
+nix-shell                       # dev shell with rocq, mathcomp, relation-algebra,
+                                # rocq-elpi, coq-lsp and vsrocq (`vsrocqtop`)
 nix-build                       # build and install the library into the Nix store
 ```
 
@@ -90,10 +92,13 @@ Useful commands available inside the shell: `nixHelp`, `ppNixEnv` (list the pack
 versions), `ppBundles`, `cachedMake`, `genNixActions` (regenerate the GitHub Actions workflows in
 [`.github/workflows/`](.github/workflows), one per bundle).
 
-Two overlays live in [`.nix/rocq-overlays/`](.nix/rocq-overlays):
+Three overlays live in [`.nix/rocq-overlays/`](.nix/rocq-overlays):
 [`inclogic`](.nix/rocq-overlays/inclogic/default.nix) describes this development, which is not in
-nixpkgs, and [`relation-algebra`](.nix/rocq-overlays/relation-algebra/default.nix) adds release
-1.9.0 — the first to support Rocq 9.2 — which nixpkgs does not carry yet.
+nixpkgs; [`relation-algebra`](.nix/rocq-overlays/relation-algebra/default.nix) adds release 1.9.0,
+the first to support Rocq 9.2; and
+[`vsrocq-language-server`](.nix/rocq-overlays/vsrocq-language-server/default.nix) widens vsrocq to
+Rocq 9.2 (upstream 2.4.3 already declares `< 9.3~`) and builds it against `rocq-core`. Both of the
+latter can be dropped once nixpkgs catches up.
 
 ### Build
 
@@ -129,6 +134,8 @@ The files are listed in dependency order (the order of `_CoqProject`).
 | [`theories/Inc.v`](theories/Inc.v) | Incorrectness Logic. `tag = TOk \| TErr` and `lift` to make O'Hearn's `ε` metavariable explicit, the inductive `Inc_triple` `⟦ ⟧`, derived forward/backward-variant/choice/consequence rules, semantic `IncTriple` `⟦⟦ ⟧⟧`. Modules: `SPre`, `IncSoundness` (`Inc_triple_sound`), `IncCompleteness` (syntactic `spo`/`spe`, `Inc_complete`), `SP` (strongest-post generator). |
 | [`theories/Sil.v`](theories/Sil.v) | Sufficient Incorrectness Logic. Inductive `Sil_triple` `⟪ ⟫` (with a `nat`-indexed invariant for `CSTAR`), semantic `SilTriple` `⟪⟪ ⟫⟫`, `StrongTriple` bridge, `sil_eq_total_hoare_det`. Modules: `Wp` (backward image, computed by inversion), `SilSoundness`, `SilCompleteness`; plus the IL↔SIL connection `sp_wp_adjoint` and the dual distribution laws. |
 | [`theories/ExampleInc.v`](theories/ExampleInc.v) | The four programs of Figure 5 / §6.1 of O'Hearn's paper (`loop0`, `client0`, `loop1`, `loop2`) with their IL triples proved, plus `ok`-shaped variants of the sequence/consequence/backwards-variant rules used by the examples. |
+| [`theories/IncElpi.v`](theories/IncElpi.v) | Automated search for IL triples, driven by **Elpi**. The canonical loop annotation `Istar P c = fun s => ∃m, iter_slp_ok P c m s` — the strongest legal one — makes `vcond` trivial, so no invariant or variant has to be invented; what remains is one goal, "the target is reachable in *some* number of turns". Elpi reifies `com → acom`, then searches: iterative deepening on the turn count, backtracking on `CHOICE`, and inversion of the assigned expression to compute each assignment witness. `il_auto` does the lot. |
+| [`theories/ExampleIncElpi.v`](theories/ExampleIncElpi.v) | The Figure 5 programs again, each proved by `Proof. il_auto. Qed.` with no annotation of any kind. Also states the coverage boundary — what the search reaches and what it does not. |
 | [`theories/KatInc.v`](theories/KatInc.v) | IMP over **Kleene Algebra with Tests** (`RelationAlgebra`): `prog` syntax, relational `bstep`, its inductive counterpart `bstep'`, the `kat` tactic deriving Hoare rules, and the TopKAT-style encoding of incorrectness triples. |
 | [`theories/KatIncImp.v`](theories/KatIncImp.v) | The bridge: `prog'` (KAT programs with syntactic expressions), translations `to_com` / `to_kat`, the proof that `bstep` and `cexec` agree on normal results, and the lifting of `Incorrectness` to `IncTriple`. |
 | [`theories/Assumptions.v`](theories/Assumptions.v) | `Print Assumptions` for every headline theorem of `Hoare`, `Inc` and `Sil` — the axiom-freeness check. |

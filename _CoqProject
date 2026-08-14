@@ -9,4 +9,6 @@ theories/ExampleInc.v
 theories/ExampleIncSP.v
 theories/KatInc.v
 theories/KatIncImp.v
+theories/IncElpi.v
+theories/ExampleIncElpi.v
 theories/Assumptions.v
