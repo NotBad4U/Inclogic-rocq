@@ -28,8 +28,10 @@
     [loop2] errors at 2,000,000 — is out of reach by construction: the search
     unrolls, so it finds bugs at small depth.  That example keeps its
     hand-written invariant in [ExampleIncSP.v].
-  - [client0] (an [ERROR] guarded by a test, *after* a loop containing
-    [NONDET]) is not currently found; see the note at the end of the file. *)
+  - [client0] — an [ERROR] guarded by a test after a loop containing [NONDET] —
+    automatic as stated with [def "x"]; without it, one loop is annotated and
+    the search does the rest.  This is the point of the annotation being
+    optional per loop rather than all-or-nothing. *)
 
 From Stdlib Require Import Arith ZArith Psatz Bool String List.
 From mathcomp Require Import ssrbool eqtype choice.
@@ -114,27 +116,54 @@ Lemma loop0_reaches_5 :
   ⟦⟦ ok ↑ ("x" ≐ 5 ∧ "n" ⩽ 0 ∧ def "x" ∧ def "n") ⟧⟧.
 Proof. il_auto. Qed.
 
-(** ** Known gap: [client0]
+(** ** client0 — Fig 5, lines 12-16: [loop0(); if (x == 5) error()]
 
-<<
-  Definition client0 : com :=
-    loop0 ;; IF (EQUAL "x" 5) THEN ERROR END.
+    An [ERROR] guarded by a test, reached after a loop containing [NONDET].
+    Two versions, and the difference between them is exactly one conjunct.
 
-  Lemma client0_bug :
-    ⟦⟦ ⊤ ⟧⟧ client0
-    ⟦⟦ err ↑ ("x" ≐ 5 ∧ "n" ⩽ 0 ∧ def "n") ⟧⟧.
-  Proof. il_auto. Qed.   (* fails *)
->>
+    Unannotated and fully automatic, provided the post asks for [def "x"]. *)
 
-  Composing the two features above — an [ERROR] guarded by a test, reached
-  after a loop containing [NONDET] — is not found.  Logging the leaves the
-  search cannot close shows them to be store-domain goals of the shape
-  [x \in domf (update y v s)]: the post constrains [n] but says nothing about
-  [x], so membership has to be recovered from [s x <> 0] *underneath* the
-  [update]s the loop body left behind.
+Definition client0_bare : com :=
+  (NONDET "n" ;; ASSIGN "x" 0 ;;
+   WHILE ("n" ≻ 0) DO ASSIGN "x" ("x" + "n") ;; NONDET "n" END)
+  ;; IF ("x" ≐ 5) THEN ERROR END.
 
-  A domain solver that peels those [update]s does close them, but it also makes
-  strictly more branches survive, and the resulting wider search turned
-  [e1_reaches_2] from 0.5 s into 8.5 minutes.  Making the search cheap enough
-  to afford the stronger leaf solver is the open problem here; [client0] keeps
-  its hand-written proof in [ExampleIncSP.v] meanwhile. *)
+Lemma client0_bug_weak :
+  ⟦⟦ ⊤ ⟧⟧ client0_bare
+  ⟦⟦ err ↑ ("x" ≐ 5 ∧ "n" ⩽ 0 ∧ def "x" ∧ def "n") ⟧⟧.
+Proof. il_auto. Qed.
+
+(** Drop [def "x"] and the triple gets *stronger* — in incorrectness logic a
+    smaller post is the harder claim, since every [Q]-state must be shown
+    reachable.  Now the search has to derive [x ∈ dom] from [s "x" = 5 ≠ 0]
+    underneath the [update]s the loop body left behind.  A leaf solver that
+    does so exists, but everything it additionally proves is another branch
+    the search explores before failing: adding it took [e1_reaches_2] from
+    0.5s to 8.5 minutes.
+
+    So the fact is supplied rather than derived — by annotating the one loop
+    that needs it, and leaving every other loop [None].  [il_vcond] discharges
+    all the resulting side conditions but the coverage one, and that one is an
+    [iter_slp_ok] goal [il_search] closes once the turn count is given. *)
+
+Definition loop0_inv : assertion := ("x" ⩾ 0 ∧ def "x" ∧ def "n")%A.
+#[local] Hint Unfold loop0_inv : il.
+
+Definition client0 : com :=
+  (NONDET "n" ;; ASSIGN "x" 0 ;;
+   WHILE ⟨ loop0_inv ⟩ ("n" ≻ 0) DO ASSIGN "x" ("x" + "n") ;; NONDET "n" END)
+  ;; IF ("x" ≐ 5) THEN ERROR END.
+
+Lemma client0_bug :
+  ⟦⟦ ⊤ ⟧⟧ client0 ⟦⟦ err ↑ ("x" ≐ 5 ∧ "n" ⩽ 0 ∧ def "n") ⟧⟧.
+Proof.
+  apply il_entry.
+  - il_vcond.
+    (* the only obligation left: a state with [x ≥ 0] is reached in 0 turns
+       if [x = 0], and in 1 otherwise *)
+    intros s Hs. autounfold with il in Hs. cbn [aeval] in Hs.
+    destruct Hs as [Hnn [Hdx Hdn]].
+    destruct (Z.eq_dec (s "x") 0) as [Hz | Hnz];
+      [ exists 0%nat | exists 1%nat ]; il_search.
+  - il_post.
+Qed.

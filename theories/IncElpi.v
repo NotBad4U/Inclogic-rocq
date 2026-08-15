@@ -101,6 +101,18 @@ Lemma slp_ok_choice_r: forall (P: assertion) c1 c2 (s: store),
 Proof. intros; right; assumption. Qed.
 
 (** The loop: [k] turns suffice. *)
+(** An *annotated* loop hands its post straight over: with [★ ⟨ I ⟩] the post
+    is [I], with [★ ⟨| R |⟩] it is some stage of [R].  This is the escape
+    hatch — annotate the one loop the search cannot do, leave the rest [None]
+    and let [il_auto] handle them. *)
+Lemma slp_ok_cstar_inv: forall (P: assertion) Inv body (s: store),
+  Inv s -> SP.slp_ok P (CSTAR (Some (AInv Inv)) body) s.
+Proof. auto. Qed.
+
+Lemma slp_ok_cstar_var: forall (P: assertion) R body (s: store) (n: nat),
+  R n s -> SP.slp_ok P (CSTAR (Some (AVar R)) body) s.
+Proof. intros P R body s n H. exists n. exact H. Qed.
+
 (** [k] turns suffice: [slp_ok_cstar_none] read backwards. *)
 Lemma slp_ok_cstar: forall (P: assertion) body (s: store) (k: nat),
   SP.iter_slp_ok P body k s -> SP.slp_ok P (CSTAR None body) s.
@@ -207,6 +219,9 @@ Ltac il_leaf :=
 (** The user's precondition, once the search has consumed the whole program.
     [tauto]/[lia] after unfolding is all we can do in general. *)
 Ltac il_pre :=
+  (* user-supplied invariants are opaque constants; register them with
+     [#[local] Hint Unfold my_inv : il.] and they are unfolded here *)
+  try autounfold with il in *;
   (* deliberately does NOT unfold SP.slp_ok & co: [slp_ok P (CHOICE c1 c2)]
      mentions P twice, so unfolding under a loop is exponential in the number
      of turns.  Only the assertion combinators are expanded here. *)
@@ -271,6 +286,8 @@ Ltac il_r_assign m  := apply (slp_ok_assign _ _ _ _ m).
 Ltac il_r_nondet m  := apply (slp_ok_nondet _ _ _ m).
 Ltac il_r_seq       := apply slp_ok_seq.
 Ltac il_r_cstar k   := apply (slp_ok_cstar _ _ _ k).
+Ltac il_r_cinv      := apply slp_ok_cstar_inv.
+Ltac il_r_cvar n    := apply (slp_ok_cstar_var _ _ _ _ n).
 Ltac il_r_choice_l  := apply slp_ok_choice_l.
 Ltac il_r_choice_r  := apply slp_ok_choice_r.
 Ltac il_r_iterO     := apply iter_slp_ok_O.
@@ -401,6 +418,11 @@ sok _P {{ NONDET lp:_X }} S (goal _ _ Ty _ _ as G) GL :- !,
   dispatch-all SGs GL.
 sok _P {{ SEQ lp:_C1 lp:_C2 }} _S G GL :- !,
   coq.ltac.call "il_r_seq" [] G SGs, dispatch-all SGs GL.
+sok _P {{ CSTAR (Some (AInv lp:_I)) lp:_B }} _S G GL :- !,
+  coq.ltac.call "il_r_cinv" [] G SGs, dispatch-all SGs GL.
+sok _P {{ CSTAR (Some (AVar lp:_R)) lp:_B }} _S G GL :- !,
+  max-depth D, nat-upto D K,
+  coq.ltac.call "il_r_cvar" [trm K] G SGs, dispatch-all SGs GL.
 sok _P {{ CSTAR None lp:_B }} _S G GL :- !,
   max-depth D, nat-upto D K,
   coq.ltac.call "il_r_cstar" [trm K] G SGs, dispatch-all SGs GL.
@@ -435,6 +457,10 @@ solve G GL :- search G GL.
 }}.
 
 Ltac il_search := elpi il_run.
+
+(** The post half on its own, for proofs that discharge [vcond] by hand
+    because some loop carries an annotation. *)
+Ltac il_post := il_open; il_search.
 
 (** Everything: discharge [vcond], split the post, search. *)
 Ltac il_auto := il_setup; [ il_open; il_search .. ].
