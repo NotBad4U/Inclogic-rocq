@@ -62,7 +62,7 @@ Inductive Sil_triple : assertion -> com -> postassertion -> Prop :=
     Sil_triple P2 c2 Q ->
     (*──────────────────────────*)
     Sil_triple (P1 \\// P2) (CHOICE c1 c2) Q
-| Sil_iter : forall c (Q: postassertion) (I: nat -> assertion),
+| Sil_iter : forall ann c (Q: postassertion) (I: nat -> assertion),
     (* base: from [I 0] the loop may stop in [Q], or error out into [Q]
        on the very next iteration *)
     (forall s, I 0%nat s ->
@@ -73,7 +73,7 @@ Inductive Sil_triple : assertion -> com -> postassertion -> Prop :=
                                                   | RError _   => False
                                                   end)) ->
     (*──────────────────────────*)
-    Sil_triple (fun s => exists n, I n s) (CSTAR c) Q
+    Sil_triple (fun s => exists n, I n s) (CSTAR ann c) Q
 | Sil_cons : forall P P' c Q Q',
     (P -->> P') ->
     Sil_triple P' c Q' ->
@@ -420,10 +420,10 @@ Proof.
 Qed.
 
 (** Every state in [wp (CSTAR c) Q] is captured by the family. *)
-Lemma wp_cstar_to_iterI : forall c Q s,
-  wp (CSTAR c) Q s -> exists n, iterI c Q n s.
+Lemma wp_cstar_to_iterI : forall ann c Q s,
+  wp (CSTAR ann c) Q s -> exists n, iterI c Q n s.
 Proof.
-  intros c Q s [r [Hex HQ]]. destruct r as [s'' | sf].
+  intros ann c Q s [r [Hex HQ]]. destruct r as [s'' | sf].
   - apply cexec_cstar_iff_star in Hex.
     eapply iterI_prepend; [ exact Hex | ]. instantiate (1 := O).
     left. exact HQ.
@@ -466,8 +466,8 @@ Proof.
     eapply Sil_cons; [ | exact Sch | intros r Hr; exact Hr ].
     intros s Hs. apply wp_choice. exact Hs.
   - (* CSTAR *)
-    assert (Hiter : ⟪ fun s => exists n, iterI c Q n s ⟫ (CSTAR c) ⟪ Q ⟫).
-    { apply (Sil_iter c Q (iterI c Q)).
+    assert (Hiter : ⟪ fun s => exists n, iterI c Q n s ⟫ (CSTAR ann c) ⟪ Q ⟫).
+    { apply (Sil_iter ann c Q (iterI c Q)).
       - intros s H. exact H.
       - intro n. eapply Sil_cons; [ | apply (IHc (fun res => match res with
                                                              | RNormal s' => iterI c Q n s'
@@ -475,7 +475,7 @@ Proof.
                                                              end)) | intros r Hr; exact Hr ].
         intros s [s' [Hex HIn]]. exists (RNormal s'). split; [ exact Hex | exact HIn ]. }
     eapply Sil_cons; [ | exact Hiter | intros r Hr; exact Hr ].
-    intros s Hs. apply wp_cstar_to_iterI. exact Hs.
+    intros s Hs. apply (wp_cstar_to_iterI ann). exact Hs.
 Qed.
 
 Theorem Sil_complete : forall P c Q,

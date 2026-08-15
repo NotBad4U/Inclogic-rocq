@@ -96,7 +96,7 @@ Proof.
       * apply IHp'1; assumption.
   - (* whl' *)
     destruct (whl_to_star _ _ _ IHp' _ _ H) as [STAR Hbfalse].
-    apply cexec_cstar_iff_star in STAR.
+    apply (cexec_cstar_iff_star None) in STAR.
     eapply cexec_seq.
     + exact STAR.
     + apply cexec_assume. cbn. now rewrite Hbfalse.

@@ -29,6 +29,13 @@ This repository provides:
 * **Hoare logic**: partial and total correctness, formalised so that its relationship with
   Incorrectness Logic can itself be stated and proved.
 
+One syntax carries all of this. A loop annotation is *optional* (`CSTAR (option assertion)`),
+which turns out to separate the two directions cleanly: `Hoare.WP` **requires** an invariant,
+because a weakest liberal precondition is a greatest fixpoint and cannot be computed by
+recursion, whereas `Inc.SP` does **not**, because a strongest post is a least fixpoint — the
+union of the loop's iterates. That is exactly what makes the automated search of
+[`IncElpi.v`](theories/IncElpi.v) possible.
+
 ### The four triples at a glance
 
 | Notation | Definition | Reading |
@@ -129,7 +136,7 @@ The files are listed in dependency order (the order of `_CoqProject`).
 |---|---|
 | [`theories/Sequences.v`](theories/Sequences.v) | Generic library on transition relations: `star` (reflexive-transitive closure), `plus`, `irred`, `infseq` and its coinduction principle, determinism/uniqueness lemmas. |
 | [`theories/RelKleene.v`](theories/RelKleene.v) | Kleene-algebra layer over `Sequences`: extensional relation equality `≡`, composition `⨟`, `Proper` instances so `rewrite` traverses `star`/`plus`, and the Kleene laws (`star_idem`, unfoldings, `star_star`). |
-| [`theories/Imp.v`](theories/Imp.v) | The IMP language. `Choice`/`Countable` instances for `ascii`/`string` (so `store := {fmap string → Z}` typechecks), syntax `aexp`/`bexp`/`com`, `result = RNormal | RError`, small-step `red`, big-step `cexec`, `WHILE`/`IF` as derived forms, `CSTAR` ↔ `star (step_iter c)`, and the equivalence `cexec ↔ star red`. |
+| [`theories/Imp.v`](theories/Imp.v) | The IMP language. `Choice`/`Countable` instances for `ascii`/`string` (so `store := {fmap string → Z}` typechecks), syntax `aexp`/`bexp`/`com`, `result = RNormal \| RError`, small-step `red`, big-step `cexec`, `WHILE`/`IF` as derived forms, `CSTAR` ↔ `star (step_iter c)`, and the equivalence `cexec ↔ star red`. A loop carries an **optional invariant** — `CSTAR (ann : option assertion) c`, written `c ★` or `c ★⟨I⟩` — so there is a single command syntax throughout; `unannot` strips the annotations and `cexec_unannot` shows execution never looks at them. |
 | [`theories/Hoare.v`](theories/Hoare.v) | Hoare logic. Weak triple `⦃⦃ ⦄⦄`, strong system `⦇ ⦈` (well-founded `CSTAR` variant rule), demonic `Triple` `⦇⦇ ⦈⦈`. Modules: `Soundness`, `Completness` (semantic `wlp`, self-invariant `CSTAR`, adequacy), `WP` and `SP` (verification-condition generators), `TotalCorrectness` (inductive `safe`, `TotalTriple`, soundness/completeness/adequacy). |
 | [`theories/Inc.v`](theories/Inc.v) | Incorrectness Logic. `tag = TOk \| TErr` and `lift` to make O'Hearn's `ε` metavariable explicit, the inductive `Inc_triple` `⟦ ⟧`, derived forward/backward-variant/choice/consequence rules, semantic `IncTriple` `⟦⟦ ⟧⟧`. Modules: `SPre`, `IncSoundness` (`Inc_triple_sound`), `IncCompleteness` (syntactic `spo`/`spe`, `Inc_complete`), `SP` (strongest-post generator). |
 | [`theories/Sil.v`](theories/Sil.v) | Sufficient Incorrectness Logic. Inductive `Sil_triple` `⟪ ⟫` (with a `nat`-indexed invariant for `CSTAR`), semantic `SilTriple` `⟪⟪ ⟫⟫`, `StrongTriple` bridge, `sil_eq_total_hoare_det`. Modules: `Wp` (backward image, computed by inversion), `SilSoundness`, `SilCompleteness`; plus the IL↔SIL connection `sp_wp_adjoint` and the dual distribution laws. |

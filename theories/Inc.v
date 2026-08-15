@@ -62,10 +62,12 @@
   - [Module SP] is the strongest-post calculus, computing those posts rather than
     postulating them.  It follows Section 5.2 (Predicate Transformers), where the article gives
     the equations for [post] at choice and iteration, the latter by appeal to a loop invariant.
-    Accordingly: a language [acom] of commands whose loops carry an invariant, functions
-    [slp_ok] and [slp_err] computing the normal and erroneous posts syntactically, a side
-    condition [vcond] discharging the loop invariants, and a verification-condition generator
-    [vcgen] shown correct by [vcgen_sound].
+    Accordingly: functions [slp_ok] and [slp_err] computing the normal and erroneous
+    posts syntactically, a side condition [vcond] discharging the loop invariants, and a
+    verification-condition generator [vcgen] shown correct by [vcgen_sound].  The invariants
+    ride on the commands themselves — [Imp.CSTAR] takes an [option assertion] — so there is
+    no separate annotated language.  A loop left unannotated gets the exact post, the union
+    of its iterates, which is what makes the search of [IncElpi.v] possible.
 
   [[1]] Peter W. O'Hearn. 2019. Incorrectness logic. Proc. ACM Program. Lang. 4, POPL,
   Article 10 (January 2020), 32 pages. https://doi.org/10.1145/3371078
@@ -192,17 +194,17 @@ Inductive Inc_triple: assertion -> com -> postassertion -> Prop :=
     ⟦ Q1 ⟧ c2 ⟦ Q2 ⟧ ->
     (*───────────── (Sequencing (normal)) *)
     ⟦ P ⟧ (c1 ;; c2) ⟦ Q2 ⟧
-| Inc_iterate_zero: forall P c,
+| Inc_iterate_zero: forall P ann c,
     (*─────────────────── (Iterate zero) *)
-    ⟦ P ⟧ CSTAR c ⟦ ok ↑ P ⟧
-| Inc_iterate_step: forall P c (Q: postassertion),
-    ⟦ P ⟧ (CSTAR c ;; c) ⟦ Q ⟧ ->
+    ⟦ P ⟧ CSTAR ann c ⟦ ok ↑ P ⟧
+| Inc_iterate_step: forall P ann c (Q: postassertion),
+    ⟦ P ⟧ (CSTAR ann c ;; c) ⟦ Q ⟧ ->
     (*───────────────────────────── (Iterate non-zero) *)
-    ⟦ P ⟧ (CSTAR c) ⟦ Q ⟧
-| Inc_backwards_var: forall (P: nat -> assertion) c,
+    ⟦ P ⟧ (CSTAR ann c) ⟦ Q ⟧
+| Inc_backwards_var: forall (P: nat -> assertion) ann c,
     (forall n, ⟦ P n ⟧ c ⟦ ok ↑ P (S n) ⟧) ->
     (*────────────────────────────────────────────────── (Backwards Variant (where n fresh)) *)
-    ⟦ P 0%nat ⟧ CSTAR c ⟦ ok ↑ (fun s => exists m, P m s) ⟧
+    ⟦ P 0%nat ⟧ CSTAR ann c ⟦ ok ↑ (fun s => exists m, P m s) ⟧
 | Inc_choice_l: forall P c1 c2 (Q: postassertion),
     ⟦ P ⟧ c1 ⟦ Q ⟧ ->
     (*───────────────────── (Choice i = 1) *)
@@ -338,15 +340,15 @@ Qed.
 (** Erroring iteration: run the star to an intermediate assertion [M], take one
     further iteration of [c] that errors, and fold that extra iteration back
     into the star with [Inc_iterate_step]. *)
-Lemma Inc_err_cstar: forall P c M R,
-    ⟦ P ⟧ CSTAR c ⟦ ok ↑ M ⟧ ->
+Lemma Inc_err_cstar: forall P ann c M R,
+    ⟦ P ⟧ CSTAR ann c ⟦ ok ↑ M ⟧ ->
     ⟦ M ⟧ c ⟦ err ↑ R ⟧ ->
     (*──────────────────────────*)
-    ⟦ P ⟧ CSTAR c ⟦ err ↑ R ⟧.
+    ⟦ P ⟧ CSTAR ann c ⟦ err ↑ R ⟧.
 Proof.
-  intros P c M R Hok Herr.
+  intros P ann c M R Hok Herr.
   apply Inc_iterate_step.
-  exact (Inc_ok_seq P (CSTAR c) c M _ Hok Herr).
+  exact (Inc_ok_seq P (CSTAR ann c) c M _ Hok Herr).
 Qed.
 
 (** Gluing an [ok] and an [err] triple over the same precondition into a single
@@ -475,12 +477,12 @@ Qed.
 
 (** The backwards variant rule is [Inc_backwards_var] with [n + 1] in place of
     [S n] and an [ϵ]-shaped premise. *)
-Lemma Inc_backwards_variant: forall (P: nat -> assertion) c,
+Lemma Inc_backwards_variant: forall (P: nat -> assertion) ann c,
     (forall n, ⟦ P n ⟧ c ⟦ ϵ ↑ P (n + 1)%nat ⟧) ->
     (*───────────────────────────────────────────────────────────*)
-    ⟦ P 0%nat ⟧ CSTAR c ⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧.
+    ⟦ P 0%nat ⟧ CSTAR ann c ⟦ ok ↑ (fun s => exists (m: nat), P m s) ⟧.
 Proof.
-  intros P c H.
+  intros P ann c H.
   apply Inc_backwards_var. intros n. specialize (H n).
   rewrite Nat.add_1_r in H. apply eps_to_ok, H.
 Qed.
@@ -524,25 +526,33 @@ reachable from some state in the precondition, that is,
 Definition IncTriple (P: assertion) (c: com) (Q: postassertion) : Prop :=
   forall r, Q r -> exists s, P s /\ cexec s c r.
 
+(** [Imp.cexec_unannot] lifted to triples. *)
+Lemma IncTriple_unannot: forall P c Q,
+  IncTriple P c Q -> IncTriple P (unannot c) Q.
+Proof.
+  intros P c Q H r HQ. destruct (H r HQ) as [s [HP HX]].
+  exists s. split; [ exact HP | apply cexec_unannot; exact HX ].
+Qed.
+
 Notation "⟦⟦ P ⟧⟧ c ⟦⟦ 'ϵ' ↑ Q ⟧⟧" :=
-  (IncTriple P c (fun r => match r with
-                           | RNormal s => Q s
-                           | RError s  => Q s
-                           end))
+  (IncTriple P%A c (fun r => match r with
+                             | RNormal s => Q%A s
+                             | RError s  => Q%A s
+                             end))
   (at level 90, c at next level).
 
 Notation "⟦⟦ P ⟧⟧ c ⟦⟦ 'err' ↑ Q ⟧⟧" :=
-  (IncTriple P c (fun r => match r with
-                           | RNormal _ => False
-                           | RError s  => Q s
-                           end))
+  (IncTriple P%A c (fun r => match r with
+                             | RNormal _ => False
+                             | RError s  => Q%A s
+                             end))
   (at level 90, c at next level).
 
 Notation "⟦⟦ P ⟧⟧ c ⟦⟦ 'ok' ↑ Q ⟧⟧" :=
-  (IncTriple P c (fun r => match r with
-                           | RNormal s => Q s
-                           | RError _  => False
-                           end))
+  (IncTriple P%A c (fun r => match r with
+                             | RNormal s => Q%A s
+                             | RError _  => False
+                             end))
   (at level 90, c at next level).
 
 (* Postassertion-level triple: [Q] is a [postassertion] (it inspects the
@@ -660,11 +670,11 @@ Proof.
   apply cexec_seq_error. exact EXEC1.
 Qed.
 
-Lemma inc_triple_iterate_non_zero: forall P c (Q: postassertion),
-    ⟦⟦ P ⟧⟧  c ★ ;; c  ⟦⟦ Q ⟧⟧ ->
-    ⟦⟦ P ⟧⟧  c ★ ⟦⟦ Q ⟧⟧.
+Lemma inc_triple_iterate_non_zero: forall P ann c (Q: postassertion),
+    ⟦⟦ P ⟧⟧  CSTAR ann c ;; c  ⟦⟦ Q ⟧⟧ ->
+    ⟦⟦ P ⟧⟧  CSTAR ann c ⟦⟦ Q ⟧⟧.
 Proof.
-  intros P c Q H r HQ.
+  intros P ann c Q H r HQ.
   destruct (H r HQ) as (s & HPs & EXEC).
   inversion EXEC; subst.
   - (* CSTAR normal, then c normal: append one iteration *)
@@ -682,10 +692,10 @@ Proof.
     exists s'. split; [ exact H3 | exact H5 ].
 Qed.
 
-Lemma inc_triple_iterate_zero: forall P c,
-    ⟦⟦ P ⟧⟧  c ★ ⟦⟦ ok ↑ P ⟧⟧.
+Lemma inc_triple_iterate_zero: forall P ann c,
+    ⟦⟦ P ⟧⟧  CSTAR ann c ⟦⟦ ok ↑ P ⟧⟧.
 Proof.
-    intros P c r Q.
+    intros P ann c r Q.
     destruct r as [s | sf].
     - exists s.  split; [ exact Q | ]. constructor.
     - contradiction Q.
@@ -1008,19 +1018,19 @@ Fixpoint cmd_n (i: nat) c : com :=
 (** A finite unrolling [cmd_n i c] is a refinement of [CSTAR c]: every
     execution of the unrolled form is an execution of the iteration.  Proven
     by induction on [i]. *)
-Lemma cmd_n_to_cstar: forall i c s r,
-  cexec s (cmd_n i c) r -> cexec s (CSTAR c) r.
+Lemma cmd_n_to_cstar: forall i ann c s r,
+  cexec s (cmd_n i c) r -> cexec s (CSTAR ann c) r.
 Proof.
-  induction i as [|n IH]; intros c s r EXEC; cbn in EXEC.
+  induction i as [|n IH]; intros ann c s r EXEC; cbn in EXEC.
   - inversion EXEC; subst. apply cexec_cstar_done.
   - apply cexec_seq_inv in EXEC.
     destruct EXEC as
       [ (sm & sf & H1 & H2 & ->)
       | [ (sf & H1 & ->) | (sm & sf & H1 & H2 & ->) ] ].
-    + apply (IH c sm (RNormal sf)) in H2.
+    + apply (IH ann c sm (RNormal sf)) in H2.
       eapply cexec_cstar_step_ok; eauto.
     + eapply cexec_cstar_step_error; eauto.
-    + apply (IH c sm (RError sf)) in H2.
+    + apply (IH ann c sm (RError sf)) in H2.
       eapply cexec_cstar_step_iter_error; eauto.
 Qed.
 
@@ -1036,9 +1046,9 @@ Proof.
   intros P c postassert_i H r HQ.
   destruct r as [s' | s']; cbn in HQ; destruct HQ as [j Hj].
   - destruct (H j (RNormal s') Hj) as (s & HPs & EXEC).
-    exists s. split; [ exact HPs | apply cmd_n_to_cstar in EXEC; exact EXEC ].
+    exists s. split; [ exact HPs | apply (cmd_n_to_cstar _ None) in EXEC; exact EXEC ].
   - destruct (H j (RError s') Hj) as (s & HPs & EXEC).
-    exists s. split; [ exact HPs | apply cmd_n_to_cstar in EXEC; exact EXEC ].
+    exists s. split; [ exact HPs | apply (cmd_n_to_cstar _ None) in EXEC; exact EXEC ].
 Qed.
 
 (*
@@ -1158,11 +1168,11 @@ Proof.
 Qed.
 
 (* Normal iteration: an [ok] invariant family [P n] (one more successful iteration each step) collects into [∃ m, P m]. *)
-Lemma inc_triple_ok_cstar: forall (P: nat -> assertion) c,
+Lemma inc_triple_ok_cstar: forall (P: nat -> assertion) ann c,
     (forall n, ⟦⟦ P n ⟧⟧ c ⟦⟦ ok ↑ P (S n) ⟧⟧) ->
-    ⟦⟦ P 0%nat ⟧⟧ CSTAR c ⟦⟦ ok ↑ (fun s => exists m, P m s) ⟧⟧.
+    ⟦⟦ P 0%nat ⟧⟧ CSTAR ann c ⟦⟦ ok ↑ (fun s => exists m, P m s) ⟧⟧.
 Proof.
-  intros P c H r HQ.
+  intros P ann c H r HQ.
   destruct r as [s' | s']; [ | exfalso; exact HQ ].
   destruct HQ as [m HPm].
   revert s' HPm.
@@ -1178,12 +1188,12 @@ Proof.
 Qed.
 
 (* Erroring iteration: reach an intermediate [M] by normal iterations, then error in one more body execution. *)
-Lemma inc_triple_err_cstar: forall P c M R,
-    ⟦⟦ P ⟧⟧ CSTAR c ⟦⟦ ok ↑ M ⟧⟧ ->
+Lemma inc_triple_err_cstar: forall P ann c M R,
+    ⟦⟦ P ⟧⟧ CSTAR ann c ⟦⟦ ok ↑ M ⟧⟧ ->
     ⟦⟦ M ⟧⟧ c ⟦⟦ err ↑ R ⟧⟧ ->
-    ⟦⟦ P ⟧⟧ CSTAR c ⟦⟦ err ↑ R ⟧⟧.
+    ⟦⟦ P ⟧⟧ CSTAR ann c ⟦⟦ err ↑ R ⟧⟧.
 Proof.
-  intros P c M R HM HR r HRr.
+  intros P ann c M R HM HR r HRr.
   destruct r as [s | s]; [ exfalso; exact HRr | ].
   destruct (HR (RError s) HRr) as (s_mid & HMmid & EXEC_c).
   destruct (HM (RNormal s_mid) HMmid) as (s_pre & HP & EXEC_star).
@@ -1682,13 +1692,13 @@ Ltac sp_weaken rule :=
     intros (? & ? & HX); inversion HX; subst;
     unfold spo, spe, aor, aand, atrue in *; eauto 8 ].
 
-Lemma spo_cstar_der: forall c P,
+Lemma spo_cstar_der: forall ann c P,
   (forall P', ⟦ P' ⟧ c ⟦ ok ↑ spo c P' ⟧) ->
-  ⟦ P ⟧ CSTAR c ⟦ ok ↑ spo (CSTAR c) P ⟧.
+  ⟦ P ⟧ CSTAR ann c ⟦ ok ↑ spo (CSTAR ann c) P ⟧.
 Proof.
-  intros c P IH.
+  intros ann c P IH.
   eapply Inc_post_weaken.
-  { apply (Inc_backwards_var (spo_iter c P) c). intros n. exact (IH _). }
+  { apply (Inc_backwards_var (spo_iter c P) ann c). intros n. exact (IH _). }
   intros [s|s]; cbn; try tauto.
   intros (s0 & HP & HX). apply cexec_cstar_iff_star in HX.
   eapply spo_star_complete; eauto.
@@ -1725,10 +1735,10 @@ Proof.
   - (* CSTAR, ok *)
     apply spo_cstar_der. intros P'. exact (proj1 (IHc P')).
   - (* CSTAR, err *)
-    assert (Hok : ⟦ P ⟧ CSTAR c ⟦ ok ↑ spo (CSTAR c) P ⟧)
+    assert (Hok : ⟦ P ⟧ CSTAR ann c ⟦ ok ↑ spo (CSTAR ann c) P ⟧)
       by (apply spo_cstar_der; intros P'; exact (proj1 (IHc P'))).
-    destruct (IHc (spo (CSTAR c) P)) as [_ Herr].
-    eapply Inc_post_weaken; [ exact (Inc_err_cstar _ _ _ _ Hok Herr) | ].
+    destruct (IHc (spo (CSTAR ann c) P)) as [_ Herr].
+    eapply Inc_post_weaken; [ exact (Inc_err_cstar _ _ _ _ _ Hok Herr) | ].
     intros [s|s]; cbn; try tauto.
     intros (s0 & HP & HX). apply cexec_cstar_err_iff in HX.
     destruct HX as (s' & HStar & HcErr).
@@ -1812,28 +1822,18 @@ Module SP.
     >>
   *)
 
-  (** This is the language of commands where [CSTAR] are annotated by an invariant [Inv]. *)
-  Inductive acom: Type :=
-  | SKIP                         (**r do nothing *)
-  | ERROR                        (**r interrupt the program *)
-  | ASSIGN (x: ident) (a: aexp)  (**r assignment: [v := a] *)
-  | NONDET (x: ident)            (**r non-deterministic assignment to [x] *)
-  | ASSUME (b: bexp)             (**r assume that [b] holds *)
-  | SEQ (c1: acom) (c2: acom)      (**r sequence: [c1; c2] *)
-  | CHOICE (c1: acom) (c2: acom)   (**r non-deterministic choice: [c1 + c2] *)
-  | CSTAR (Invariant: assertion) (c1: acom).             (**r non-deterministic iteration: [c1★] *)
+  (** Commands already carry their loop annotations ([Imp.CSTAR] takes an
+      [option assertion]), so there is no separate annotated syntax and
+      nothing to erase.
 
-  Fixpoint erase (a : acom): com :=
-  match a with
-  | SKIP => Imp.SKIP
-  | ERROR => Imp.ERROR
-  | ASSIGN x a => Imp.ASSIGN x a
-  | NONDET x => Imp.NONDET x
-  | ASSUME b => Imp.ASSUME b
-  | SEQ c1 c2 => Imp.SEQ (erase c1) (erase c2)
-  | CHOICE c1 c2 => Imp.CHOICE (erase c1) (erase c2)
-  | CSTAR _ c => Imp.CSTAR (erase c) (* main case, we remove the invariant annotation of the program *)
-  end.
+      The two cases of a loop are the whole point of the optional annotation:
+
+      - [CSTAR (Some Inv) c] is pinned to [Inv], and [vcond] then owes the
+        obligation that [Inv] really is reachable;
+      - [CSTAR None c] gets the *exact* post, the union of the iterates.
+        Under-approximation can afford this because the object is a least
+        fixpoint; [Hoare.WP] cannot, its [wlp] being a greatest one, which is
+        why annotations are mandatory there. *)
 
   (* Strongest Liberal Postcondition for normal executions *)
 
@@ -1841,7 +1841,7 @@ Module SP.
     The exact reachable post over every result tag at once.
     Strongest [ok]-post: the exact reachable store after _normal_ termination.
   *)
-  Fixpoint slp_ok (P: assertion) (c: acom) : assertion :=
+  Fixpoint slp_ok (P: assertion) (c: com) : assertion :=
   match c with
   | SKIP => fun s => P s
   | ERROR => ffalse
@@ -1851,11 +1851,21 @@ Module SP.
   | NONDET x => in_domf x //\\ aexists (fun (m: Z) => aupdate x (CONST m) P)
   | CHOICE c1 c2 => slp_ok P c1 \\// slp_ok P c2
   | SEQ c1 c2 => slp_ok (slp_ok P c1) c2
-  | CSTAR Inv c => Inv
+  | CSTAR (Some (AInv Inv)) _ => Inv
+  | CSTAR (Some (AVar R)) _ => fun s => exists n, R n s
+  | CSTAR None body =>
+      (* the union of the iterates.  Spelled as a local fixpoint because
+         [iter_slp_ok] below is defined in terms of [slp_ok] itself;
+         [slp_ok_cstar_none] identifies the two. *)
+      fun s => exists m,
+        (fix it (n: nat) : assertion :=
+           match n with O => P | S k => slp_ok (it k) body end) m s
   end.
 
-  (** Strongest [err]-post: the exact reachable store after a *faulting* run. *)
-  Fixpoint slp_err (P: assertion) (c: acom) : assertion :=
+  (** Strongest [err]-post: the exact reachable store after a *faulting* run.
+      A loop faults exactly when its body faults at a state the loop can
+      reach, uniformly [slp_ok P (CSTAR ann body)]. *)
+  Fixpoint slp_err (P: assertion) (c: com) : assertion :=
   match c with
   | SKIP => ffalse
   | ERROR => P
@@ -1864,78 +1874,32 @@ Module SP.
   | NONDET x => ffalse
   | CHOICE c1 c2 => slp_err P c1 \\// slp_err P c2
   | SEQ c1 c2 => slp_err P c1 \\// slp_err (slp_ok P c1) c2
-  (** A loop faults exactly when some iterate reaches a state from which the
-      body faults.  The annotation [Inv] under-approximates that union of
-      iterates ([vcond]), so running the body's own [err]-post at [Inv] is a
-      sound — and, for a strong enough [Inv], usable — under-approximation.
-      This is the syntactic counterpart of [Inc_err_cstar]. *)
-  | CSTAR Inv c => slp_err Inv c
+  | CSTAR ann body => slp_err (slp_ok P (CSTAR ann body)) body
   end.
 
   (** The strongest _postassertion_: it inspects the result tag and returns the
-      [ok] post on normal termination and the [err] post on faulting. This is
-      the [result -> Prop] value you asked for — built by matching on the
-      postassertion's own argument [r], not by running [cexec] (which is a
-      [Prop] relation and cannot be matched on inside a [Fixpoint]). *)
-  Definition sp (P: assertion) (c: acom) : postassertion :=
+      [ok] post on normal termination and the [err] post on faulting. *)
+  Definition sp (P: assertion) (c: com) : postassertion :=
     fun r => match r with
              | RNormal s => slp_ok P c s
              | RError s  => slp_err P c s
              end.
 
   (** [iter_slp_ok P c n] is the strongest [ok]-post after exactly [n]
-      iterations of [c] from [P].  The union over all [n] is the strongest
-      post of the loop, which an annotated invariant must under-approximate. *)
-  Fixpoint iter_slp_ok (P: assertion) (c: acom) (n: nat) : assertion :=
+      iterations of [c] from [P]. *)
+  Fixpoint iter_slp_ok (P: assertion) (c: com) (n: nat) : assertion :=
     match n with
     | O => P
     | S k => slp_ok (iter_slp_ok P c k) c
     end.
 
-(** Well-formedness of the loop annotations in [c]: every [CSTAR Inv body]
-    carries an invariant [Inv] that under-approximates the union of the
-    [iter_slp_ok] iterates (the nat-indexed variant), and whose body is
-    itself well-formed at each iterate and at [Inv].  This is exactly the
-    side condition that makes the loop case of [slp_ok_correct] provable. *)
-Fixpoint vcond (P: assertion) (c: acom) : Prop :=
-  match c with
-  | SKIP => True
-  | ERROR => True
-  | ASSUME _ => True
-  | ASSIGN _ _ => True
-  | NONDET _ => True
-  | CHOICE c1 c2 => vcond P c1 /\ vcond P c2
-  | SEQ c1 c2 => vcond P c1 /\ vcond (slp_ok P c1) c2
-  | CSTAR Inv body =>
-      (Inv -->> (fun s => exists m, iter_slp_ok P body m s))
-      /\ (forall m, vcond (iter_slp_ok P body m) body)
-      /\ vcond Inv body
-  end.
-
-  Definition vcgen (P: assertion) (c: acom) (Q: postassertion) : Prop :=
-    vcond P c /\ (Q --* sp P c).
-
-  (** ** Rules for discharging [vcond]
-
-      [vcond] is a computation, so for a loop-free command it reduces to a
-      conjunction of [True]s.  All the content sits in the loop annotations,
-      and the rules below reduce those to assertion-level obligations. *)
-
-  Lemma vcond_seq: forall P c1 c2,
-    vcond P c1 -> vcond (slp_ok P c1) c2 -> vcond P (SEQ c1 c2).
-  Proof. intros P c1 c2 H1 H2. exact (conj H1 H2). Qed.
-
-  Lemma vcond_choice: forall P c1 c2,
-    vcond P c1 -> vcond P c2 -> vcond P (CHOICE c1 c2).
-  Proof. intros P c1 c2 H1 H2. exact (conj H1 H2). Qed.
-
   (** [slp_ok] is monotone in the precondition: starting from more states can
-      only reach more.  (The loop case is degenerate — its post is the
+      only reach more.  (An annotated loop is degenerate — its post is the
       annotation, which does not mention [P] at all.) *)
   Lemma slp_ok_mono: forall c (P P': assertion),
     (P -->> P') -> (slp_ok P c -->> slp_ok P' c).
   Proof.
-    induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | Inv body IHbody ];
+    induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | ann body IHb ];
       intros P P' Hsub s H; cbn [slp_ok] in H |- *.
     - (* SKIP *) apply Hsub, H.
     - (* ERROR *) exact H.
@@ -1948,14 +1912,71 @@ Fixpoint vcond (P: assertion) (c: acom) : Prop :=
     - (* SEQ *) exact (IH2 _ _ (IH1 _ _ Hsub) s H).
     - (* CHOICE *) destruct H as [H | H];
         [ left; exact (IH1 _ _ Hsub s H) | right; exact (IH2 _ _ Hsub s H) ].
-    - (* CSTAR *) exact H.
+    - (* CSTAR *)
+      destruct ann as [Inv | ]; [ exact H | ].
+      destruct H as [m Hm]. exists m. revert s Hm.
+      induction m as [ | k IHk ]; intros s Hm; cbn in *;
+        [ apply Hsub, Hm | exact (IHb _ _ IHk s Hm) ].
   Qed.
 
+  (** The local fixpoint of the [CSTAR None] case is [iter_slp_ok]. *)
+  Lemma slp_ok_cstar_none: forall P body s,
+    slp_ok P (CSTAR None body) s <-> exists m, iter_slp_ok P body m s.
+  Proof.
+    intros P body s. cbn [slp_ok]. split; intros [m Hm]; exists m; revert s Hm;
+      induction m as [ | k IH ]; intros s Hm; cbn in *; try exact Hm;
+      [ exact (slp_ok_mono body _ _ IH s Hm) | exact (slp_ok_mono body _ _ IH s Hm) ].
+  Qed.
+
+(** Well-formedness of the loop annotations in [c].  An annotated loop owes
+    the obligation that its invariant is actually reached; an unannotated one
+    owes nothing beyond its body's own conditions. *)
+Fixpoint vcond (P: assertion) (c: com) : Prop :=
+  match c with
+  | SKIP => True
+  | ERROR => True
+  | ASSUME _ => True
+  | ASSIGN _ _ => True
+  | NONDET _ => True
+  | CHOICE c1 c2 => vcond P c1 /\ vcond P c2
+  | SEQ c1 c2 => vcond P c1 /\ vcond (slp_ok P c1) c2
+  | CSTAR (Some (AInv Inv)) body =>
+      (Inv -->> (fun s => exists m, iter_slp_ok P body m s))
+      /\ (forall m, vcond (iter_slp_ok P body m) body)
+      /\ vcond Inv body
+  | CSTAR (Some (AVar R)) body =>
+      (* no coverage obligation here, unlike [AInv] — see [Imp.loopann] *)
+      (R 0%nat -->> P)
+      /\ (forall n, R (S n) -->> slp_ok (R n) body)
+      /\ (forall m, vcond (iter_slp_ok P body m) body)
+      /\ vcond (fun s => exists n, R n s) body
+  | CSTAR None body =>
+      (forall m, vcond (iter_slp_ok P body m) body)
+      /\ vcond (slp_ok P (CSTAR None body)) body
+  end.
+
+  Definition vcgen (P: assertion) (c: com) (Q: postassertion) : Prop :=
+    vcond P c /\ (Q --* sp P c).
+
+  (** ** Rules for discharging [vcond] *)
+
+  Lemma vcond_seq: forall P c1 c2,
+    vcond P c1 -> vcond (slp_ok P c1) c2 -> vcond P (SEQ c1 c2).
+  Proof. intros P c1 c2 H1 H2. exact (conj H1 H2). Qed.
+
+  Lemma vcond_choice: forall P c1 c2,
+    vcond P c1 -> vcond P c2 -> vcond P (CHOICE c1 c2).
+  Proof. intros P c1 c2 H1 H2. exact (conj H1 H2). Qed.
+
+  (** An unannotated loop over a body that is well-formed at every assertion —
+      in particular any loop-free body — costs nothing at all. *)
+  Lemma vcond_cstar_none: forall P body,
+    (forall R, vcond R body) -> vcond P (CSTAR None body).
+  Proof. intros P body H. split; [ intros m | ]; apply H. Qed.
+
   (** A *forwards variant* [R]: [R n] describes the states reachable after
-      exactly [n] turns of the loop.  If [R 0] is inside the loop's entry
-      condition and each [R (S n)] is reached from [R n] by one pass through
-      the body, then [R n] under-approximates the [n]-th syntactic iterate. *)
-  Lemma iter_slp_ok_of_variant: forall (P: assertion) (body: acom) (R: nat -> assertion),
+      exactly [n] turns of the loop. *)
+  Lemma iter_slp_ok_of_variant: forall (P: assertion) (body: com) (R: nat -> assertion),
     (R 0%nat -->> P) ->
     (forall n, R (S n) -->> slp_ok (R n) body) ->
     forall n, R n -->> iter_slp_ok P body n.
@@ -1966,16 +1987,28 @@ Fixpoint vcond (P: assertion) (c: acom) : Prop :=
       exact (slp_ok_mono body (R k) (iter_slp_ok P body k) IH s (HS k s Hs)).
   Qed.
 
-  (** Hence the annotation rule: a loop annotation [Inv] is legal as soon as
-      some forwards variant covers it.  This replaces, at the syntactic level,
-      the bespoke [star]-induction the same argument needs semantically. *)
-  Lemma vcond_cstar_variant: forall (P Inv: assertion) (body: acom) (R: nat -> assertion),
+  (** A variant annotation is legal as soon as its stages start inside [P]
+      and step through the body. *)
+  Lemma vcond_cstar_var: forall (P: assertion) (body: com) (R: nat -> assertion),
+    (R 0%nat -->> P) ->
+    (forall n, R (S n) -->> slp_ok (R n) body) ->
+    (forall m, vcond (iter_slp_ok P body m) body) ->
+    vcond (fun s => exists n, R n s) body ->
+    vcond P (CSTAR (Some (AVar R)) body).
+  Proof.
+    intros P body R H0 HS Hiter Hbody.
+    exact (conj H0 (conj HS (conj Hiter Hbody))).
+  Qed.
+
+  (** Hence the annotation rule: an annotation [Inv] is legal as soon as some
+      forwards variant covers it. *)
+  Lemma vcond_cstar_variant: forall (P Inv: assertion) (body: com) (R: nat -> assertion),
     (R 0%nat -->> P) ->
     (forall n, R (S n) -->> slp_ok (R n) body) ->
     (Inv -->> (fun s => exists n, R n s)) ->
     (forall m, vcond (iter_slp_ok P body m) body) ->
     vcond Inv body ->
-    vcond P (CSTAR Inv body).
+    vcond P (CSTAR (Some (AInv Inv)) body).
   Proof.
     intros P Inv body R H0 HS Hcover Hiter Hinv.
     split; [ | exact (conj Hiter Hinv) ].
@@ -1994,8 +2027,6 @@ Fixpoint vcond (P: assertion) (c: acom) : Prop :=
     intros c P P' Hsub s [s0 [HP HX]]. exists s0. split; [ apply Hsub; exact HP | exact HX ].
   Qed.
 
-  (** Every state reached by [n] successful iterations of [c] is reachable from
-      [P] through the reflexive-transitive closure of one body step. *)
   Lemma spo_iter_star: forall c P m s,
     spo_iter c P m s -> exists s0, P s0 /\ star (step_iter c) s0 s.
   Proof.
@@ -2007,19 +2038,19 @@ Fixpoint vcond (P: assertion) (c: acom) : Prop :=
       eapply star_trans; [ exact HSt | apply star_one; unfold step_iter; exact HX ].
   Qed.
 
-  (** Hence such a state is in the strongest [ok]-post of [CSTAR c]. *)
-  Lemma spo_iter_to_cstar: forall c P m s,
-    spo_iter c P m s -> spo (Imp.CSTAR c) P s.
+  Lemma spo_iter_to_cstar: forall ann c P m s,
+    spo_iter c P m s -> spo (Imp.CSTAR ann c) P s.
   Proof.
-    intros c P m s Hit. destruct (spo_iter_star c P m s Hit) as [s0 [HP HSt]].
+    intros ann c P m s Hit. destruct (spo_iter_star c P m s Hit) as [s0 [HP HSt]].
     unfold spo. exists s0. split; [ exact HP | apply cexec_cstar_of_star; exact HSt ].
   Qed.
 
-  (** The syntactic [ok]-post under-approximates the semantic one. *)
-  Lemma slp_ok_spo: forall c P, vcond P c -> forall s, slp_ok P c s -> spo (erase c) P s.
+  (** The syntactic iterates under-approximate the semantic ones.  Stated
+      before [slp_ok_spo] and proved together with it by a nested induction. *)
+  Lemma slp_ok_spo_and_iter: forall c P, vcond P c -> forall s, slp_ok P c s -> spo c P s.
   Proof.
-    induction c as [ | | x a | x | b | c1 IHc1 c2 IHc2 | c1 IHc1 c2 IHc2 | Inv body IHbody ];
-      intros P Hv s Hslp; cbn [erase].
+    induction c as [ | | x a | x | b | c1 IHc1 c2 IHc2 | c1 IHc1 c2 IHc2 | ann body IHbody ];
+      intros P Hv s Hslp.
     - (* SKIP *) cbn [slp_ok] in Hslp. unfold spo. exists s. split; [ exact Hslp | apply cexec_skip ].
     - (* ERROR *) cbn [slp_ok] in Hslp. contradiction.
     - (* ASSIGN x a *) cbn [slp_ok] in Hslp.
@@ -2051,24 +2082,35 @@ Fixpoint vcond (P: assertion) (c: acom) : Prop :=
         unfold spo. exists s0. split; [ exact HP | apply cexec_choice_left; exact HX ].
       + pose proof (IHc2 P Hv2 s H2) as Hspo. unfold spo in Hspo. destruct Hspo as [s0 [HP HX]].
         unfold spo. exists s0. split; [ exact HP | apply cexec_choice_right; exact HX ].
-    - (* CSTAR Inv body *) cbn [slp_ok] in Hslp. cbn [vcond] in Hv.
-      destruct Hv as [Hinv [Hiter Hinvbody]].
-      apply Hinv in Hslp. destruct Hslp as [m Hm].
-      assert (Hsub: forall k s', iter_slp_ok P body k s' -> spo_iter (erase body) P k s').
-      { induction k as [|j IHj]; intros s' Hk.
+    - (* CSTAR *)
+      assert (Hsub: forall (Hiter: forall m, vcond (iter_slp_ok P body m) body) k s',
+                iter_slp_ok P body k s' -> spo_iter body P k s').
+      { intros Hiter k. induction k as [|j IHj]; intros s' Hk.
         - exact Hk.
         - cbn [iter_slp_ok] in Hk. cbn [spo_iter].
           pose proof (IHbody (iter_slp_ok P body j) (Hiter j) s' Hk) as Hspo.
           eapply spo_mono; [ exact IHj | exact Hspo ]. }
-      apply (spo_iter_to_cstar (erase body) P m s). apply Hsub. exact Hm.
+      destruct ann as [[Inv | R] | ].
+      + cbn [slp_ok] in Hslp. cbn [vcond] in Hv.
+        destruct Hv as [Hinv [Hiter Hinvbody]].
+        apply Hinv in Hslp. destruct Hslp as [m Hm].
+        apply (spo_iter_to_cstar _ body P m s). apply (Hsub Hiter). exact Hm.
+      + cbn [slp_ok] in Hslp. cbn [vcond] in Hv.
+        destruct Hv as [H0 [HS [Hiter _]]].
+        destruct Hslp as [n Hn].
+        apply (spo_iter_to_cstar _ body P n s). apply (Hsub Hiter).
+        exact (iter_slp_ok_of_variant P body R H0 HS n s Hn).
+      + cbn [vcond] in Hv. destruct Hv as [Hiter _].
+        apply slp_ok_cstar_none in Hslp. destruct Hslp as [m Hm].
+        apply (spo_iter_to_cstar None body P m s). apply (Hsub Hiter). exact Hm.
   Qed.
 
-  (** The [Hsub] step of the loop case above, as a standalone lemma: the
-      syntactic iterates under-approximate the semantic ones.  Reused by
-      [slp_err_spe] to reach the state at which the loop body faults. *)
+  Definition slp_ok_spo := slp_ok_spo_and_iter.
+
+  (** The [Hsub] step above, as a standalone lemma. *)
   Lemma iter_slp_ok_spo_iter: forall body P m s,
     (forall k, vcond (iter_slp_ok P body k) body) ->
-    iter_slp_ok P body m s -> spo_iter (erase body) P m s.
+    iter_slp_ok P body m s -> spo_iter body P m s.
   Proof.
     intros body P m. induction m as [|j IH]; intros s Hv Hm.
     - exact Hm.
@@ -2079,10 +2121,10 @@ Fixpoint vcond (P: assertion) (c: acom) : Prop :=
   Qed.
 
   (** The syntactic [err]-post under-approximates the semantic one. *)
-  Lemma slp_err_spe: forall c P, vcond P c -> forall s, slp_err P c s -> spe (erase c) P s.
+  Lemma slp_err_spe: forall c P, vcond P c -> forall s, slp_err P c s -> spe c P s.
   Proof.
-    induction c as [ | | x a | x | b | c1 IHc1 c2 IHc2 | c1 IHc1 c2 IHc2 | Inv body IHbody ];
-      intros P Hv s Hslp; cbn [erase].
+    induction c as [ | | x a | x | b | c1 IHc1 c2 IHc2 | c1 IHc1 c2 IHc2 | ann body IHbody ];
+      intros P Hv s Hslp.
     - (* SKIP *) cbn [slp_err] in Hslp. contradiction.
     - (* ERROR *) cbn [slp_err] in Hslp. unfold spe. exists s. split; [ exact Hslp | apply cexec_error ].
     - (* ASSIGN *) cbn [slp_err] in Hslp. contradiction.
@@ -2103,101 +2145,79 @@ Fixpoint vcond (P: assertion) (c: acom) : Prop :=
         unfold spe. exists s0. split; [ exact HP | apply cexec_choice_left; exact HX ].
       + pose proof (IHc2 P Hv2 s H2) as Hspe. unfold spe in Hspe. destruct Hspe as [s0 [HP HX]].
         unfold spe. exists s0. split; [ exact HP | apply cexec_choice_right; exact HX ].
-    - (* CSTAR Inv body *) cbn [slp_err] in Hslp. cbn [vcond] in Hv.
-      destruct Hv as [Hinv [Hiter Hinvbody]].
-      (* The body faults at [s], starting from some [Inv]-state [s1]. *)
-      pose proof (IHbody Inv Hinvbody s Hslp) as Hspe. unfold spe in Hspe.
-      destruct Hspe as [s1 [HInv1 HX1]].
-      (* [Inv] under-approximates the iterates, so [s1] is [star]-reachable. *)
-      apply Hinv in HInv1. destruct HInv1 as [m Hm].
-      pose proof (iter_slp_ok_spo_iter body P m s1 Hiter Hm) as Hit.
-      destruct (spo_iter_star (erase body) P m s1 Hit) as [s0 [HP HSt]].
+    - (* CSTAR: the body faults at a state the loop reaches *)
+      cbn [slp_err] in Hslp.
+      assert (Hbody: vcond (slp_ok P (CSTAR ann body)) body).
+      { destruct ann as [[Inv | R] | ]; cbn [vcond] in Hv.
+        - destruct Hv as [_ [_ Hib]]. exact Hib.
+        - destruct Hv as [_ [_ [_ Hib]]]. exact Hib.
+        - destruct Hv as [_ Hib]. exact Hib. }
+      pose proof (IHbody _ Hbody s Hslp) as Hspe. unfold spe in Hspe.
+      destruct Hspe as [s1 [Hreach HX1]].
+      pose proof (slp_ok_spo (CSTAR ann body) P Hv s1 Hreach) as Hspo.
+      unfold spo in Hspo. destruct Hspo as [s0 [HP HStar]].
       unfold spe. exists s0. split; [ exact HP | ].
-      apply cexec_cstar_err_iff. exists s1. split; [ exact HSt | exact HX1 ].
+      apply cexec_cstar_err_iff. exists s1.
+      split; [ exact (proj1 (cexec_cstar_iff_star ann body s0 s1) HStar) | exact HX1 ].
   Qed.
 
-  (** The annotated [ok]-post is a derivable incorrectness post. *)
-  Lemma slp_ok_sound: forall c P, vcond P c -> ⟦ P ⟧ erase c ⟦ ok ↑ slp_ok P c ⟧.
+  (** The [ok]-post is a derivable incorrectness post. *)
+  Lemma slp_ok_sound: forall c P, vcond P c -> ⟦ P ⟧ c ⟦ ok ↑ slp_ok P c ⟧.
   Proof.
     intros c P Hv.
-    destruct (sp_der (erase c) P) as [Hok _].
+    destruct (sp_der c P) as [Hok _].
     eapply Inc_post_weaken; [ exact Hok | ].
     intros r; destruct r as [s|s]; cbn;
       [ intros Hslp; exact (slp_ok_spo c P Hv s Hslp) | tauto ].
   Qed.
 
-  (** The annotated [err]-post is a derivable incorrectness post. *)
-  Lemma slp_err_sound: forall c P, vcond P c -> ⟦ P ⟧ erase c ⟦ err ↑ slp_err P c ⟧.
+  Lemma slp_err_sound: forall c P, vcond P c -> ⟦ P ⟧ c ⟦ err ↑ slp_err P c ⟧.
   Proof.
     intros c P Hv.
-    destruct (sp_der (erase c) P) as [_ Herr].
+    destruct (sp_der c P) as [_ Herr].
     eapply Inc_post_weaken; [ exact Herr | ].
     intros r; destruct r as [s|s]; cbn;
       [ tauto | intros Hslp; exact (slp_err_spe c P Hv s Hslp) ].
   Qed.
 
-  (** Soundness of the combined strongest postassertion: under the loop side
-      conditions [vcond], the triple [⟦ P ⟧ erase c ⟦ sp P c ⟧] is derivable. *)
   Lemma sp_sound: forall c P,
-    vcond P c -> ⟦ P ⟧ erase c ⟦ sp P c ⟧.
+    vcond P c -> ⟦ P ⟧ c ⟦ sp P c ⟧.
   Proof.
     intros c P Hv.
-    exact (Inc_combine_ok_err P (erase c) (slp_ok P c) (slp_err P c)
+    exact (Inc_combine_ok_err P c (slp_ok P c) (slp_err P c)
              (slp_ok_sound c P Hv) (slp_err_sound c P Hv)).
   Qed.
 
-  (** Soundness of the verification-condition generator: if the side conditions
-      hold and [Q] under-approximates the strongest post, then [⟦ P ⟧ erase c ⟦ Q ⟧]. *)
   Theorem vcgen_sound: forall P c Q,
-  vcgen P c Q -> ⟦ P ⟧ erase c ⟦ Q ⟧.
+  vcgen P c Q -> ⟦ P ⟧ c ⟦ Q ⟧.
   Proof.
     intros P c Q [Hv Himp].
     eapply Inc_post_weaken; [ exact (sp_sound c P Hv) | exact Himp ].
   Qed.
 
-  (** The same, read semantically and stated over a plain [com].  This is the
-      entry point for verifying a concrete program: annotate it with loop
-      invariants, discharge [erase a = c] by [reflexivity], and what remains is
-      [vcgen] — the invariant side conditions plus a post inclusion, both pure
-      assertion-level goals with no [cexec] reasoning left in them. *)
-  Corollary vcgen_valid: forall P (a: acom) (c: com) (Q: postassertion),
-    erase a = c ->
-    vcgen P a Q ->
+  (** The entry point for verifying a concrete program: what remains is
+      [vcgen] — the loop side conditions plus a post inclusion, both pure
+      assertion-level goals with no [cexec] reasoning left in them.  There is
+      no [erase] premise any more: there is only one syntax. *)
+  Corollary vcgen_valid: forall P (c: com) (Q: postassertion),
+    vcgen P c Q ->
     ⟦⟦ P ⟧⟧ c ⟦⟦ Q ⟧⟧.
   Proof.
-    intros P a c Q <- HV.
+    intros P c Q HV.
     apply IncSoundness.Inc_triple_sound_gen, vcgen_sound, HV.
+  Qed.
+
+  (** The same for the bare program.  [unannot c] reduces to it, so [apply]
+      sees the two as equal. *)
+  Corollary vcgen_valid_unannot: forall P (c: com) (Q: postassertion),
+    vcgen P c Q ->
+    ⟦⟦ P ⟧⟧ (unannot c) ⟦⟦ Q ⟧⟧.
+  Proof.
+    intros P c Q HV. apply IncTriple_unannot, vcgen_valid, HV.
   Qed.
 
 End SP.
 
-(** ** Surface syntax for annotated commands
+(** The loop notations — [c ★], [c ★ ⟨ I ⟩], [c ★ ⟨| R |⟩] — are declared once
+    in [Imp.v]. *)
 
-    [acom] mirrors [com], so it gets the same notations, in their own scope
-    [acom_scope] (write [( ... )%acom]).  The only difference is the loop
-    forms, which carry their invariant in [⟨ _ ⟩]. *)
-
-Declare Scope acom_scope.
-Delimit Scope acom_scope with acom.
-Bind Scope acom_scope with SP.acom.
-
-Infix ";;" := SP.SEQ (at level 80, right associativity) : acom_scope.
-
-Notation "c1 '⊕' c2" := (SP.CHOICE c1 c2)
-  (at level 85, right associativity) : acom_scope.
-
-Notation "c '★' '⟨' I '⟩'" := (SP.CSTAR I c)
-  (at level 90, right associativity) : acom_scope.
-
-Notation "'WHILE' '⟨' I '⟩' b 'DO' c 'END'" :=
-  (SP.SEQ (SP.CSTAR I (SP.SEQ (SP.ASSUME b) c)) (SP.ASSUME (NOT b)))
-    (at level 95, right associativity) : acom_scope.
-
-Notation "'IF' b 'THEN' c1 'ELSE' c2 'END'" :=
-  (SP.CHOICE (SP.SEQ (SP.ASSUME b) c1) (SP.SEQ (SP.ASSUME (NOT b)) c2))
-    (at level 89, right associativity,
-     b at level 99, c1 at level 89, c2 at level 89) : acom_scope.
-
-Notation "'IF' b 'THEN' c1 'END'" := (IF b THEN c1 ELSE SP.SKIP END)%acom
-  (at level 89, right associativity,
-   b at level 99, c1 at level 89, only parsing) : acom_scope.

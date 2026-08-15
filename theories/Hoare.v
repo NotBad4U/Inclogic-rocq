@@ -99,8 +99,7 @@ Proof.
   inversion FIN; subst. exact STARr.
 Qed.
 
-Definition assertion : Type := store -> Prop.
-
+(** [assertion] is defined in [Imp.v]: the syntax there lets a loop carry one. *)
 Definition postassertion : Type := result -> Prop.
 
 Definition aand (P Q: assertion) : assertion :=
@@ -213,10 +212,10 @@ Inductive WeakHoareRes: assertion -> com -> postassertion -> Prop :=
     ⦃ P ⦄ c2 ⦃ Q ⦄ ->
     (* ---------------------- *)
     ⦃ P ⦄ (c1 ⊕ c2) ⦃ Q ⦄
-| Hoare_cstar_ress: forall INV c,
+| Hoare_cstar_ress: forall INV ann c,
     ⦃ INV ⦄ c ⦃ INV ⦄ ->
     (* ------------------ *)
-    ⦃ INV ⦄ (CSTAR c) ⦃ INV ⦄
+    ⦃ INV ⦄ (CSTAR ann c) ⦃ INV ⦄
 | Hoare_assume_r: forall (b: bexp) Q,
     (* [ASSUME b] succeeds without error when the guard holds and otherwise
        blocks; its weakest precondition is "if the guard holds, then [Q]". *)
@@ -517,7 +516,7 @@ Fixpoint modified_by (c: com) (x: ident) : Prop :=
   | NONDET y => x = y
   |  c1 ;; c2 => modified_by c1 x \/ modified_by c2 x
   |  c1 ⊕ c2 => modified_by c1 x \/ modified_by c2 x
-  |  c ★ => modified_by c x
+  | CSTAR _ c => modified_by c x
   end.
 
 Lemma cexec_modified:
@@ -542,6 +541,50 @@ Qed.
     but a real predicate with finmap stores. *)
 Definition in_domf (x: ident) : assertion :=
   fun s => x \in domf s.
+
+(** ** Surface syntax for assertions
+
+    An assertion is a function of the store, but writing one as [fun s => ...]
+    puts the binder in the reader's way — and in a specification the store is
+    the one thing that never varies.  [assn_scope] names the store's contents
+    directly: a program variable on the left of a comparison denotes its value,
+    so [ "x" ≐ 3 ] is [fun s => s "x" = 3].
+
+    The triple notations of [Inc.v] and the ones above open this scope for
+    their pre- and postconditions, so [%A] never has to be written. *)
+
+Declare Scope assn_scope.
+Delimit Scope assn_scope with A.
+(** So that [Definition I : assertion := ("x" ⩾ 0).] needs no [%A]. *)
+Bind Scope assn_scope with assertion.
+
+Notation "⊤" := (fun _ : store => True) : assn_scope.
+Notation "⊥" := (fun _ : store => False) : assn_scope.
+
+Notation "P ∧ Q" := (aand P Q) (at level 80, right associativity) : assn_scope.
+Notation "P ∨ Q" := (aor P Q) (at level 85, right associativity) : assn_scope.
+
+(** Both sides are [aexp]s.  These expand to a lambda over [aeval] rather than
+    to a named predicate, so [cbn [aeval]] — which every leaf tactic already
+    runs — reduces them away with no extra unfolding. *)
+Notation "a ≐ b" := (fun s : store => aeval a%X s = aeval b%X s)
+  (at level 70, no associativity) : assn_scope.
+Notation "a ≠ b" := (fun s : store => aeval a%X s <> aeval b%X s)
+  (at level 70, no associativity) : assn_scope.
+Notation "a ⩽ b" := (fun s : store => aeval a%X s <= aeval b%X s)
+  (at level 70, no associativity) : assn_scope.
+Notation "a ⩾ b" := (fun s : store => aeval b%X s <= aeval a%X s)
+  (at level 70, no associativity) : assn_scope.
+Notation "a ≺ b" := (fun s : store => aeval a%X s < aeval b%X s)
+  (at level 70, no associativity) : assn_scope.
+Notation "a ≻ b" := (fun s : store => aeval b%X s < aeval a%X s)
+  (at level 70, no associativity) : assn_scope.
+
+(** "[x] is in the domain of the store" — invisible in the paper's total-store
+    model, unavoidable with [finmap].  (A list form [defs ["x"; "n"]] would be
+    nicer for the common chain, but [_ [ _ ↦ _ ]] already claims that bracket
+    syntax for substitution, which [Inc.v] uses.) *)
+Notation "'def' x" := (in_domf x) (at level 0) : assn_scope.
 
 (** [x] in [domf] is preserved by any [cexec] that does not modify [x]. *)
 Lemma dom_update: forall (x y: ident) v (s: store),
@@ -658,11 +701,11 @@ Inductive StrongHoareRes: assertion -> com -> postassertion -> Prop :=
     (* [ERROR] always errors; a total triple is derivable only from the empty
        precondition. *)
     ⦇ (fun _ : store => False) ⦈ ERROR ⦇ Q ⦈
-| HOARE_cstar_ress: forall (INV: assertion) c (A: Type) (R: A -> A -> Prop) (m: store -> A),
+| HOARE_cstar_ress: forall (INV: assertion) ann c (A: Type) (R: A -> A -> Prop) (m: store -> A),
     well_founded R ->
     (forall a, ⦇ INV //\\ (fun s => m s = a) ⦈ c ⦇ INV //\\ (fun s => R (m s) a) ⦈) ->
     (* ------------------ *)
-    ⦇ INV ⦈ (CSTAR c) ⦇ INV ⦈
+    ⦇ INV ⦈ (CSTAR ann c) ⦇ INV ⦈
 where "⦇ P ⦈ c ⦇ Q ⦈" :=
   (StrongHoareRes P c (fun r => match r with
                           | RNormal s => Q s
@@ -781,7 +824,7 @@ Proof.
                 (Z.to_nat (aeval variant s) <= n)%nat ->
                 P s ->
                 exists sf,
-                  cexec s (CSTAR (ASSUME b ;; c)) (RNormal sf) /\
+                  cexec s (CSTAR None (ASSUME b ;; c)) (RNormal sf) /\
                   P sf /\ beval b sf = false).
     { induction n as [|n IH]; intros s Hvnn Hn PS.
       - assert (Hzero : aeval variant s = 0).
@@ -860,7 +903,7 @@ Module Soundness.
       | P c1 c2 HW IH                      (* seq_err *)
       | P Q P' Q' c HW IH HP'P HQQ'        (* consequence *)
       | P Q c1 c2 HW1 IH1 HW2 IH2          (* choice *)
-      | INV c HW IH                        (* cstar *)
+      | INV ann c HW IH                    (* cstar *)
       | b Q                                (* assume *)
       | Q                                  (* error *)
     ]; intros sx r EXEC HP.
@@ -953,7 +996,7 @@ Module Soundness.
       | x Q
       | b Q
       | Q
-      | INV cb A R m Hwf Hbody IHbody
+      | INV ann cb A R m Hwf Hbody IHbody
     ]; intros sx r EXEC HP.
     - (* HOARE_skip_r *)
       inversion EXEC; subst. cbn. exact HP.
@@ -1049,7 +1092,7 @@ Module Soundness.
       | x Q
       | b Q
       | Q
-      | INV cb A R m Hwf Hbody IHbody
+      | INV ann cb A R m Hwf Hbody IHbody
     ]; intros sx HP.
     - (* skip *) exists (RNormal sx). apply cexec_skip.
     - (* assign *) eexists. apply cexec_assign.
@@ -1176,10 +1219,10 @@ Qed.
 
 (** The crucial loop lemmas: [wlp (CSTAR c) Q] is *itself* an invariant of [c]
     and it entails [Q] (because the loop may always stop immediately). *)
-Lemma wlp_cstar_unfold: forall c Q s,
-  wlp (CSTAR c) Q s -> wlp c (wlp (CSTAR c) Q) s.
+Lemma wlp_cstar_unfold: forall ann c Q s,
+  wlp (CSTAR ann c) Q s -> wlp c (wlp (CSTAR ann c) Q) s.
 Proof.
-  intros c Q s H r1 E1. destruct r1 as [sm | sf].
+  intros ann c Q s H r1 E1. destruct r1 as [sm | sf].
   - exists sm. split; [ reflexivity | ]. intros r2 E2. destruct r2 as [sf2 | sf2].
     + apply (H (RNormal sf2)). eapply cexec_cstar_step_ok; eassumption.
     + apply (H (RError sf2)). eapply cexec_cstar_step_iter_error; eassumption.
@@ -1187,9 +1230,9 @@ Proof.
       [ eapply cexec_cstar_step_error; eassumption | discriminate EQ ].
 Qed.
 
-Lemma wlp_cstar_exit: forall c Q s, wlp (CSTAR c) Q s -> Q s.
+Lemma wlp_cstar_exit: forall ann c Q s, wlp (CSTAR ann c) Q s -> Q s.
 Proof.
-  intros c Q s H. destruct (H (RNormal s) (cexec_cstar_done c s)) as (s' & EQ & HQ).
+  intros ann c Q s H. destruct (H (RNormal s) (cexec_cstar_done ann c s)) as (s' & EQ & HQ).
   inversion EQ; subst. exact HQ.
 Qed.
 
@@ -1197,7 +1240,7 @@ Qed.
 Lemma wlp_der: forall c Q, ⦃ wlp c Q ⦄ c ⦃ Q ⦄.
 Proof.
   intro c.
-  induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | c0 IH0 ];
+  induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | ann c0 IH0 ];
     intros Q.
   - (* SKIP *)
     eapply Hoare_consequence_pre; [ apply Hoare_skip_r | ].
@@ -1227,9 +1270,9 @@ Proof.
   - (* CSTAR *)
     eapply Hoare_consequence_post.
     + apply Hoare_cstar_ress.
-      eapply Hoare_consequence_pre; [ apply (IH0 (wlp (CSTAR c0) Q)) | ].
+      eapply Hoare_consequence_pre; [ apply (IH0 (wlp (CSTAR ann c0) Q)) | ].
       intros s H. apply wlp_cstar_unfold. exact H.
-    + intros s H. exact (wlp_cstar_exit c0 Q s H).
+    + intros s H. exact (wlp_cstar_exit ann c0 Q s H).
 Qed.
 
 (** Relative completeness: every valid semantic triple is derivable. *)
@@ -1261,63 +1304,47 @@ Module WP.
     after any number of iterations, so the annotated invariant must (i) be
     preserved by the body and (ii) directly entail the postcondition. *)
 
-(** Annotated commands: [com] with [CSTAR] decorated by an invariant. *)
-Inductive acom : Type :=
-  | ASKIP
-  | AERROR
-  | AASSIGN (x: ident) (a: aexp)
-  | ANONDET (x: ident)
-  | AASSUME (b: bexp)
-  | ASEQ (c1 c2: acom)
-  | ACHOICE (c1 c2: acom)
-  | ACSTAR (Inv: assertion) (c: acom).
-
-Fixpoint erase (c: acom) : com :=
-  match c with
-  | ASKIP => SKIP
-  | AERROR => ERROR
-  | AASSIGN x a => ASSIGN x a
-  | ANONDET x => NONDET x
-  | AASSUME b => ASSUME b
-  | ASEQ c1 c2 => SEQ (erase c1) (erase c2)
-  | ACHOICE c1 c2 => CHOICE (erase c1) (erase c2)
-  | ACSTAR _ c => CSTAR (erase c)
-  end.
+(** A loop that is not annotated with an invariant gets [vcond = False]:
+    [wlp] of a loop is a greatest fixpoint, so there is nothing to compute,
+    and a variant annotation ([AVar]) describes the forward direction, which
+    is of no use here.  ([Inc.SP] is the other way round — see its header.) *)
 
 (** Syntactic weakest liberal precondition. *)
-Fixpoint wlp (c: acom) (Q: assertion) : assertion :=
+Fixpoint wlp (c: com) (Q: assertion) : assertion :=
   match c with
-  | ASKIP => Q
-  | AERROR => (fun _ => False)
-  | AASSIGN x a => aupdate x a Q
-  | ANONDET x => aforall (fun n => aupdate x (CONST n) Q)
-  | AASSUME b => (fun s => beval b s = true -> Q s)
-  | ASEQ c1 c2 => wlp c1 (wlp c2 Q)
-  | ACHOICE c1 c2 => wlp c1 Q //\\ wlp c2 Q
-  | ACSTAR Inv _ => Inv
+  | SKIP => Q
+  | ERROR => (fun _ => False)
+  | ASSIGN x a => aupdate x a Q
+  | NONDET x => aforall (fun n => aupdate x (CONST n) Q)
+  | ASSUME b => (fun s => beval b s = true -> Q s)
+  | SEQ c1 c2 => wlp c1 (wlp c2 Q)
+  | CHOICE c1 c2 => wlp c1 Q //\\ wlp c2 Q
+  | CSTAR (Some (AInv Inv)) _ => Inv
+  | CSTAR _ _ => (fun _ => False)
   end.
 
 (** Side conditions discharged by [wlp]; the only nontrivial ones come from the
     loop invariants. *)
-Fixpoint vcond (c: acom) (Q: assertion) : Prop :=
+Fixpoint vcond (c: com) (Q: assertion) : Prop :=
   match c with
-  | ASKIP | AERROR | AASSIGN _ _ | ANONDET _ | AASSUME _ => True
-  | ASEQ c1 c2 => vcond c1 (wlp c2 Q) /\ vcond c2 Q
-  | ACHOICE c1 c2 => vcond c1 Q /\ vcond c2 Q
-  | ACSTAR Inv c =>
+  | SKIP | ERROR | ASSIGN _ _ | NONDET _ | ASSUME _ => True
+  | SEQ c1 c2 => vcond c1 (wlp c2 Q) /\ vcond c2 Q
+  | CHOICE c1 c2 => vcond c1 Q /\ vcond c2 Q
+  | CSTAR (Some (AInv Inv)) c =>
       vcond c Inv /\
       (Inv -->> wlp c Inv) /\
       (Inv -->> Q)
+  | CSTAR _ _ => False
   end.
 
-Definition vcgen (P: assertion) (c: acom) (Q: assertion) : Prop :=
+Definition vcgen (P: assertion) (c: com) (Q: assertion) : Prop :=
   vcond c Q /\ (P -->> wlp c Q).
 
 (** If the verification conditions hold, the [wlp]-triple is derivable. *)
 Lemma wlp_sound: forall c Q,
-  vcond c Q -> ⦃ wlp c Q ⦄ erase c ⦃ Q ⦄.
+  vcond c Q -> ⦃ wlp c Q ⦄ c ⦃ Q ⦄.
 Proof.
-  induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | Inv c0 IH0 ];
+  induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | ann c0 IH0 ];
     intros Q VC.
   - apply Hoare_skip_r.
   - apply Hoare_error_r.
@@ -1330,7 +1357,8 @@ Proof.
     apply Hoare_choice_res.
     + eapply Hoare_consequence_pre; [ apply IH1; exact VC1 | intros s [HA _]; exact HA ].
     + eapply Hoare_consequence_pre; [ apply IH2; exact VC2 | intros s [_ HB]; exact HB ].
-  - destruct VC as (VC1 & VC2 & VC3).
+  - destruct ann as [[Inv | R] | ]; [ | destruct VC | destruct VC ].
+    destruct VC as (VC1 & VC2 & VC3).
     eapply Hoare_consequence_post.
     + apply Hoare_cstar_ress.
       eapply Hoare_consequence_pre; [ apply IH0; exact VC1 | exact VC2 ].
@@ -1338,7 +1366,7 @@ Proof.
 Qed.
 
 Theorem vcgen_sound: forall P c Q,
-  vcgen P c Q -> ⦃ P ⦄ erase c ⦃ Q ⦄.
+  vcgen P c Q -> ⦃ P ⦄ c ⦃ Q ⦄.
 Proof.
   intros P c Q [VC1 VC2].
   eapply Hoare_consequence_pre; [ apply wlp_sound; exact VC1 | exact VC2 ].
@@ -1354,66 +1382,68 @@ Module SP.
     we take the exact relational image (the set of reachable states): the purely
     syntactic "Floyd" substitution form is unsound in the over-approximation
     direction with finite-map stores, because when [x ∉ domf s] the pre-state
-    cannot be recovered from the post-state by re-substituting [x].  [ACSTAR] is
-    annotated with an invariant, and [AERROR] yields the verification condition
-    that it be unreachable. *)
+    cannot be recovered from the post-state by re-substituting [x].
 
-Import WP.  (** annotated commands [acom] and [erase] *)
+    An unannotated loop could be given the exact answer here, as [Inc.SP]
+    does; we demand an invariant instead, to stay in step with [WP]. *)
 
-Fixpoint sp (P: assertion) (c: acom) : assertion :=
+Fixpoint sp (P: assertion) (c: com) : assertion :=
   match c with
-  | ASKIP => P
-  | AERROR => (fun _ => False)
-  | AASSIGN x a => (fun s' => exists s, P s /\ s' = update x (aeval a s) s)
-  | ANONDET x => (fun s' => exists s n, P s /\ s' = update x n s)
-  | AASSUME b => atrue b //\\ P
-  | ASEQ c1 c2 => sp (sp P c1) c2
-  | ACHOICE c1 c2 => sp P c1 \\// sp P c2
-  | ACSTAR Inv _ => Inv
+  | SKIP => P
+  | ERROR => (fun _ => False)
+  | ASSIGN x a => (fun s' => exists s, P s /\ s' = update x (aeval a s) s)
+  | NONDET x => (fun s' => exists s n, P s /\ s' = update x n s)
+  | ASSUME b => atrue b //\\ P
+  | SEQ c1 c2 => sp (sp P c1) c2
+  | CHOICE c1 c2 => sp P c1 \\// sp P c2
+  | CSTAR (Some (AInv Inv)) _ => Inv
+  | CSTAR _ _ => (fun _ => False)
   end.
 
-Fixpoint vcond (P: assertion) (c: acom) : Prop :=
+Fixpoint vcond (P: assertion) (c: com) : Prop :=
   match c with
-  | ASKIP | AASSIGN _ _ | ANONDET _ | AASSUME _ => True
-  | AERROR => (P -->> (fun _ => False))
-  | ASEQ c1 c2 => vcond P c1 /\ vcond (sp P c1) c2
-  | ACHOICE c1 c2 => vcond P c1 /\ vcond P c2
-  | ACSTAR Inv c =>
+  | SKIP | ASSIGN _ _ | NONDET _ | ASSUME _ => True
+  | ERROR => (P -->> (fun _ => False))
+  | SEQ c1 c2 => vcond P c1 /\ vcond (sp P c1) c2
+  | CHOICE c1 c2 => vcond P c1 /\ vcond P c2
+  | CSTAR (Some (AInv Inv)) c =>
       vcond Inv c /\
       (P -->> Inv) /\
       (sp Inv c -->> Inv)
+  | CSTAR _ _ => False
   end.
 
-Definition vcgen (P: assertion) (c: acom) (Q: assertion) : Prop :=
+Definition vcgen (P: assertion) (c: com) (Q: assertion) : Prop :=
   vcond P c /\ (sp P c -->> Q).
 
 (** If the verification conditions hold, the [sp]-triple is derivable. *)
 Lemma sp_sound: forall c P,
-  vcond P c -> ⦃ P ⦄ erase c ⦃ sp P c ⦄.
+  vcond P c -> ⦃ P ⦄ c ⦃ sp P c ⦄.
 Proof.
-  induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | Inv c0 IH0 ];
+  induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | ann c0 IH0 ];
     intros P VC.
-  - (* ASKIP *) apply Hoare_skip_r.
-  - (* AERROR *)
+  - (* SKIP *) apply Hoare_skip_r.
+  - (* ERROR *)
     eapply Hoare_consequence_pre; [ apply Hoare_error_r | exact VC ].
-  - (* AASSIGN *)
+  - (* ASSIGN *)
     eapply Hoare_consequence_pre; [ apply Hoare_assign_r | ].
     intros s HP. unfold aupdate. exists s. split; [ exact HP | reflexivity ].
-  - (* ANONDET *)
+  - (* NONDET *)
     eapply Hoare_consequence_pre; [ apply Hoare_nondet | ].
     intros s HP n. unfold aupdate. exists s, n. split; [ exact HP | reflexivity ].
-  - (* AASSUME *)
+  - (* ASSUME *)
     eapply Hoare_consequence_pre; [ apply Hoare_assume_r | ].
     intros s HP Hb. split; [ exact Hb | exact HP ].
-  - (* ASEQ *)
+  - (* SEQ *)
     destruct VC as [VC1 VC2].
     eapply Hoare_seq_ok; [ apply (IH1 P VC1) | apply (IH2 (sp P c1) VC2) ].
-  - (* ACHOICE *)
+  - (* CHOICE *)
     destruct VC as [VC1 VC2].
     apply Hoare_choice_res.
     + eapply Hoare_consequence_post; [ apply (IH1 P VC1) | intros s Hs; left; exact Hs ].
     + eapply Hoare_consequence_post; [ apply (IH2 P VC2) | intros s Hs; right; exact Hs ].
-  - (* ACSTAR *)
+  - (* CSTAR *)
+    destruct ann as [[Inv | R] | ]; [ | destruct VC | destruct VC ].
     destruct VC as (VC1 & VC2 & VC3).
     eapply Hoare_consequence_pre.
     + apply Hoare_cstar_ress.
@@ -1422,7 +1452,7 @@ Proof.
 Qed.
 
 Theorem vcgen_sound: forall P c Q,
-  vcgen P c Q -> ⦃ P ⦄ erase c ⦃ Q ⦄.
+  vcgen P c Q -> ⦃ P ⦄ c ⦃ Q ⦄.
 Proof.
   intros P c Q [VC1 VC2].
   eapply Hoare_consequence_post; [ apply sp_sound; exact VC1 | exact VC2 ].
@@ -1553,13 +1583,13 @@ Qed.
     decreases the measure [m] under the well-founded order [R], so the loop
     cannot iterate forever. *)
 Lemma TotalTriple_cstar:
-  forall (INV: assertion) c (A: Type) (R: A -> A -> Prop) (m: store -> A),
+  forall (INV: assertion) ann c (A: Type) (R: A -> A -> Prop) (m: store -> A),
   well_founded R ->
   (forall a, TotalTriple (INV //\\ (fun s => m s = a)) c (INV //\\ (fun s => R (m s) a))) ->
-  TotalTriple INV (CSTAR c) INV.
+  TotalTriple INV (CSTAR ann c) INV.
 Proof.
-  intros INV c A R m Hwf Hbody.
-  assert (KEY: forall a s0, m s0 = a -> INV s0 -> safe INV (CSTAR c) s0).
+  intros INV ann c A R m Hwf Hbody.
+  assert (KEY: forall a s0, m s0 = a -> INV s0 -> safe INV (CSTAR ann c) s0).
   { intro a. induction a as [a IHa] using (well_founded_induction Hwf).
     intros s0 Ea HINV0.
     apply safe_step.
@@ -1599,7 +1629,7 @@ Proof.
     | x Q
     | b Q
     | Q
-    | INV cb A R m Hwf Hbody IHbody
+    | INV ann cb A R m Hwf Hbody IHbody
   ]; cbn.
   - apply TotalTriple_skip.
   - apply TotalTriple_assign.
@@ -1611,7 +1641,7 @@ Proof.
   - apply TotalTriple_nondet.
   - apply TotalTriple_assume.
   - apply TotalTriple_error.
-  - apply (TotalTriple_cstar INV cb A R m Hwf). exact IHbody.
+  - apply (TotalTriple_cstar INV ann cb A R m Hwf). exact IHbody.
 Qed.
 
 Theorem TotalTriple_soundness: forall P c Q,
@@ -1732,17 +1762,18 @@ Qed.
 
 (** [safe (CSTAR c)] entails the postcondition (the loop may stop now) and that
     one iteration of the body lands again in a loop-safe state. *)
-Lemma safe_cstar_stop: forall Q c s, safe Q (CSTAR c) s -> Q s.
+Lemma safe_cstar_stop: forall Q ann c s, safe Q (CSTAR ann c) s -> Q s.
 Proof.
-  intros Q c s H. apply (safe_skip_inv Q s).
-  apply (safe_red_preserve Q (CSTAR c) s SKIP s H). apply red_cstar_done.
+  intros Q ann c s H. apply (safe_skip_inv Q s).
+  apply (safe_red_preserve Q (CSTAR ann c) s SKIP s H). apply red_cstar_done.
 Qed.
 
-Lemma safe_cstar_body: forall Q c s,
-  safe Q (CSTAR c) s -> safe (fun s' => safe Q (CSTAR c) s') c s.
+Lemma safe_cstar_body: forall Q ann c s,
+  safe Q (CSTAR ann c) s -> safe (fun s' => safe Q (CSTAR ann c) s') c s.
 Proof.
-  intros Q c s H. apply (safe_seq_inv Q (CSTAR c) c s).
-  apply (safe_red_preserve Q (CSTAR c) s (c ;; CSTAR c) s H). apply red_cstar_step.
+  intros Q ann c s H. apply (safe_seq_inv Q (CSTAR ann c) c s).
+  apply (safe_red_preserve Q (CSTAR ann c) s (c ;; CSTAR ann c) s H).
+  apply red_cstar_step.
 Qed.
 
 (** [safe] (being inductive) makes the reduction tree well-founded. *)
@@ -1772,29 +1803,29 @@ Qed.
 
 (** Loop case: derive [⦇ twp (CSTAR c0) Q ⦈ CSTAR c0 ⦇ Q ⦈] using the
     one-iteration relation [RL] as a well-founded variant. *)
-Lemma twp_cstar_der: forall c0 Q,
+Lemma twp_cstar_der: forall ann c0 Q,
   (forall Q', ⦇ twp c0 Q' ⦈ c0 ⦇ Q' ⦈) ->
-  ⦇ twp (CSTAR c0) Q ⦈ CSTAR c0 ⦇ Q ⦈.
+  ⦇ twp (CSTAR ann c0) Q ⦈ CSTAR ann c0 ⦇ Q ⦈.
 Proof.
-  intros c0 Q IH0.
-  pose (RL := fun x s => safe Q (CSTAR c0) s /\ cexec s c0 (RNormal x)).
+  intros ann c0 Q IH0.
+  pose (RL := fun x s => safe Q (CSTAR ann c0) s /\ cexec s c0 (RNormal x)).
   assert (RL_to_plus: forall x s, cexec s c0 (RNormal x) ->
-                      plus red (CSTAR c0, s) (CSTAR c0, x)).
+                      plus red (CSTAR ann c0, s) (CSTAR ann c0, x)).
   { intros x s Hexec. apply plus_cstar_iteration.
     apply cexec_to_reds in Hexec. destruct Hexec as (cs & STAR & FIN).
     inversion FIN; subst. exact STAR. }
-  assert (safe_Acc_RL: forall s, safe Q (CSTAR c0) s -> Acc RL s).
+  assert (safe_Acc_RL: forall s, safe Q (CSTAR ann c0) s -> Acc RL s).
   { assert (GEN: forall cfg, Acc (fun y x => plus red x y) cfg ->
-                  forall s, cfg = (CSTAR c0, s) -> safe Q (CSTAR c0) s -> Acc RL s).
+                  forall s, cfg = (CSTAR ann c0, s) -> safe Q (CSTAR ann c0) s -> Acc RL s).
     { intros cfg Hacc. induction Hacc as [cfg Hacc IHacc]. intros s Ecfg Hsafe.
       apply Acc_intro. intros x HRL. unfold RL in HRL. destruct HRL as [_ Hexec].
-      apply (IHacc (CSTAR c0, x)).
+      apply (IHacc (CSTAR ann c0, x)).
       - subst cfg. apply RL_to_plus. exact Hexec.
       - reflexivity.
-      - exact (safe_cexec_post (fun s' => safe Q (CSTAR c0) s') c0 s x
-                 (safe_cstar_body Q c0 s Hsafe) Hexec). }
-    intros s Hsafe. apply (GEN (CSTAR c0, s)).
-    - apply Acc_red_plus. apply (safe_Acc Q (CSTAR c0) s Hsafe).
+      - exact (safe_cexec_post (fun s' => safe Q (CSTAR ann c0) s') c0 s x
+                 (safe_cstar_body Q ann c0 s Hsafe) Hexec). }
+    intros s Hsafe. apply (GEN (CSTAR ann c0, s)).
+    - apply Acc_red_plus. apply (safe_Acc Q (CSTAR ann c0) s Hsafe).
     - reflexivity.
     - exact Hsafe. }
   assert (RL_wf: well_founded RL).
@@ -1802,22 +1833,22 @@ Proof.
     exact (Acc_inv (safe_Acc_RL s Hsafe) (conj Hsafe Hexec)). }
   unfold twp.
   eapply Strong_consequence_post.
-  - apply (HOARE_cstar_ress (fun s => safe Q (CSTAR c0) s) c0 store RL (fun s => s) RL_wf).
+  - apply (HOARE_cstar_ress (fun s => safe Q (CSTAR ann c0) s) ann c0 store RL (fun s => s) RL_wf).
     intro a. eapply Strong_consequence_pre.
-    + apply (IH0 ((fun s => safe Q (CSTAR c0) s) //\\ (fun s' => RL s' a))).
+    + apply (IH0 ((fun s => safe Q (CSTAR ann c0) s) //\\ (fun s' => RL s' a))).
     + intros s [Hsafe Heq]. cbn in Heq. subst a. unfold twp.
       eapply safe_post_mono.
       2:{ apply safe_strengthen_reach. apply safe_cstar_body. exact Hsafe. }
       intros s' [HA HB]. split; [ exact HA | ].
       unfold RL. split; [ exact Hsafe | exact HB ].
-  - intros s H. exact (safe_cstar_stop Q c0 s H).
+  - intros s H. exact (safe_cstar_stop Q ann c0 s H).
 Qed.
 
 (** [⦇ twp c Q ⦈ c ⦇ Q ⦈] is derivable, by structural induction on [c]. *)
 Lemma twp_der: forall c Q, ⦇ twp c Q ⦈ c ⦇ Q ⦈.
 Proof.
   intro c.
-  induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | c0 IH0 ]; intros Q.
+  induction c as [ | | x a | x | b | c1 IH1 c2 IH2 | c1 IH1 c2 IH2 | ann c0 IH0 ]; intros Q.
   - eapply Strong_consequence_pre; [ apply HOARE_skip_r | intros s H; exact (safe_skip_inv Q s H) ].
   - eapply Strong_consequence_pre; [ apply HOARE_error_r | intros s H; exact (safe_error_inv Q s H) ].
   - eapply Strong_consequence_pre; [ apply HOARE_assign_r | intros s H; exact (safe_assign_inv Q x a s H) ].

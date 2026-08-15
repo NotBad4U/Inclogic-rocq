@@ -14,10 +14,10 @@
   the loops.  The reasoning is about _executions_.
 
   Here nothing is built by hand. Each program is written once in the annotated
-  language [SP.acom], its loops carrying an invariant, and the whole proof is
+  language, its loops carrying an invariant in [⟨ _ ⟩], and the whole proof is
 
 <<
-      apply (SP.vcgen_valid _ prog_a); [ reflexivity | split ]
+      apply (SP.vcgen_valid_unannot _ prog_a); split
 >>
 
   which leaves exactly two goals, both first-order arithmetic over stores:
@@ -105,7 +105,7 @@ Ltac store_simpl :=
 Ltac sp_compute :=
   try unfold SP.vcgen, SP.sp in *;
   try autounfold with sp in *;
-  cbn [SP.slp_ok SP.slp_err SP.vcond SP.iter_slp_ok SP.erase] in *;
+  cbn [SP.slp_ok SP.slp_err SP.vcond SP.iter_slp_ok unannot] in *;
   try unfold aimp, paimp, aand, aor, aexists, aforall, aupdate, aequal,
              atrue, afalse, in_domf, ffalse in *;
   cbn [aeval beval GREATER GREATEREQUAL LESS NOTEQUAL OR ODD] in *;
@@ -158,57 +158,52 @@ Ltac sp_solve :=
     function. *)
 
 Definition loop1_body : com :=
-  ASSIGN "x" (PLUS (VAR "x") (CONST 1)).
+  ASSIGN "x" ("x" + 1).
 
 Definition loop1 : com :=
-  ASSIGN "x" (CONST 0) ;; (loop1_body ★).
+  ASSIGN "x" 0 ;; (loop1_body ★).
 
-(** The loop annotation: whatever the number of turns, [x] is a nonnegative
-    integer.  This is the assertion the paper's backwards variant produces. *)
-Definition loop1_inv : assertion :=
-  fun s => 0 <= s "x" /\ "x" \in domf s.
-
-(** The same program in the annotated language: identical up to the [⟨ _ ⟩]
-    carried by the loop.  [SP.erase] gives [loop1] back — checked below by
-    [reflexivity]. *)
-Definition loop1_a : SP.acom :=
-  (SP.ASSIGN "x" (CONST 0) ;;
-   ((SP.ASSIGN "x" (PLUS (VAR "x") (CONST 1))) ★ ⟨ loop1_inv ⟩))%acom.
-
-(** The forwards variant: after [n] turns, [x] holds exactly [n]. *)
+(** The forwards variant: after [n] turns, [x] holds exactly [n].  This is the
+    only annotation the loop needs — the invariant "[x] is a nonnegative
+    integer" that the paper's backwards variant produces is its union, and
+    [★ ⟨| _ |⟩] takes that union for us. *)
 Definition loop1_var (n: nat) : assertion :=
-  fun s => s "x" = Z.of_nat n /\ "x" \in domf s.
+  ("x" ≐ Z.of_nat n ∧ def "x")%A.
 
-#[local] Hint Unfold loop1_a loop1_inv loop1_var : sp.
+(** The same program with the loop annotated. *)
+Definition loop1_a : com :=
+  ASSIGN "x" 0 ;;
+  ((ASSIGN "x" ("x" + 1)) ★ ⟨| loop1_var |⟩).
 
-(** The loop annotation is legal.  Two obligations, both arithmetic: the
-    variant steps ([x = n] becomes [x = n+1]), and it covers the annotation
-    (a nonnegative [x] is [Z.to_nat (s "x")] turns in). *)
-Lemma loop1_vcond: SP.vcond (fun _ => True) loop1_a.
+#[local] Hint Unfold loop1_a loop1_var : sp.
+
+(** The loop annotation is legal: the stages start where the loop does, and
+    one pass through [x := x+1] steps them. *)
+Lemma loop1_vcond: SP.vcond ⊤%A loop1_a.
 Proof.
   apply SP.vcond_seq; [ exact I | ].
-  apply SP.vcond_cstar_variant with (R := loop1_var).
+  apply SP.vcond_cstar_var.
   - (* entry: [x = 0] is the state right after [x := 0] *)
     intros s [Hx Hdom]. sp_compute. sp_assign 0; sp_solve.
   - (* step: one pass through [x := x+1] *)
     intros n s [Hx Hdom]. sp_compute. sp_assign (Z.of_nat n); sp_solve.
-  - (* cover: every nonnegative [x] is reached by some number of turns *)
-    intros s [Hnn Hdom]. exists (Z.to_nat (s "x")). sp_compute.
-    rewrite Z2Nat.id by exact Hnn. sp_solve.
   - intros m. exact I.
   - exact I.
 Qed.
 
 (** Backwards-variant with [P n s := s "x" = Z.of_nat n /\ "x" \in domf s]. *)
 Lemma loop1_achieves2 :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   loop1
-  ⟦⟦ ok ↑ (fun s : store => 0 <= s "x" /\ "x" \in domf s) ⟧⟧.
+  ⟦⟦ ok ↑ ("x" ⩾ 0 ∧ def "x") ⟧⟧.
 Proof.
-  apply (SP.vcgen_valid _ loop1_a); [ reflexivity | ].
+  apply (SP.vcgen_valid_unannot _ loop1_a).
   split; [ exact loop1_vcond | ].
-  (* the wanted post *is* the annotation, so the inclusion is an identity *)
-  intros r; destruct r as [s | s]; sp_compute; tauto.
+  (* the loop's post is the union of the stages, so the inclusion says which
+     stage a given state is in: a nonnegative [x] is [x] turns in *)
+  intros r; destruct r as [s | s]; sp_compute; [ | tauto ].
+  intros [Hnn Hdom]. exists (Z.to_nat (s "x")).
+  rewrite Z2Nat.id by exact Hnn. sp_solve.
 Qed.
 
 (** [achieves1] is a [consequence]-strengthening of [achieves2]: in IL the
@@ -218,15 +213,16 @@ Qed.
     verification condition — only the final inclusion changes, and [lia]
     closes it. *)
 Lemma loop1_achieves1 :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   loop1
-  ⟦⟦ ok ↑ (fun s : store => (s "x" = 0 \/ s "x" = 1 \/ s "x" = 2 \/ s "x" = 3)
-                            /\ "x" \in domf s) ⟧⟧.
+  ⟦⟦ ok ↑ (("x" ≐ 0 ∨ "x" ≐ 1 ∨ "x" ≐ 2 ∨ "x" ≐ 3) ∧ def "x") ⟧⟧.
 Proof.
-  apply (SP.vcgen_valid _ loop1_a); [ reflexivity | ].
+  apply (SP.vcgen_valid_unannot _ loop1_a).
   split; [ exact loop1_vcond | ].
   intros r; destruct r as [s | s]; sp_compute; [ | tauto ].
-  intros [Hcase Hdom]. sp_solve.
+  (* one stage per disjunct *)
+  intros [Hcase Hdom]. exists (Z.to_nat (s "x")).
+  rewrite Z2Nat.id by lia. sp_solve.
 Qed.
 
 (** ** loop2 — Fig 5, lines 32-38.
@@ -239,30 +235,30 @@ Qed.
     proof of reachability is carried by the invariant. *)
 
 Definition loop2_body : com :=
-  (IF (EQUAL (VAR "x") (CONST 2000000)) THEN ERROR END) ;;
-  ASSIGN "x" (PLUS (VAR "x") (CONST 1)).
+  (IF (EQUAL "x" 2000000) THEN ERROR END) ;;
+  ASSIGN "x" ("x" + 1).
 
 Definition loop2 : com :=
-  ASSIGN "x" (CONST 0) ;; (loop2_body ★).
+  ASSIGN "x" 0 ;; (loop2_body ★).
 
 (** The annotation: the loop counts up from [0] and stops at [2,000,000]. *)
 Definition loop2_inv : assertion :=
-  fun s => 0 <= s "x" <= 2000000 /\ "x" \in domf s.
+  (("x" ⩾ 0 ∧ "x" ⩽ 2000000) ∧ def "x")%A.
 
-Definition loop2_a : SP.acom :=
-  (SP.ASSIGN "x" (CONST 0) ;;
-   ((((IF (EQUAL (VAR "x") (CONST 2000000)) THEN SP.ERROR END) ;;
-       SP.ASSIGN "x" (PLUS (VAR "x") (CONST 1)))) ★ ⟨ loop2_inv ⟩))%acom.
+Definition loop2_a : com :=
+  ASSIGN "x" 0 ;;
+  ((((IF (EQUAL "x" 2000000) THEN ERROR END) ;;
+      ASSIGN "x" ("x" + 1))) ★ ⟨ loop2_inv ⟩).
 
 (** The forwards variant.  Indexed over [nat] as [SP.vcond_cstar_variant]
     requires, but every arithmetic fact is stated over [Z] — the huge literal
     [2000000%nat] is what breaks [lia]. *)
 Definition loop2_var (n: nat) : assertion :=
-  fun s => s "x" = Z.of_nat n /\ s "x" <= 2000000 /\ "x" \in domf s.
+  ("x" ≐ Z.of_nat n ∧ "x" ⩽ 2000000 ∧ def "x")%A.
 
 #[local] Hint Unfold loop2_a loop2_inv loop2_var : sp.
 
-Lemma loop2_vcond: SP.vcond (fun _ => True) loop2_a.
+Lemma loop2_vcond: SP.vcond ⊤%A loop2_a.
 Proof.
   apply SP.vcond_seq; [ exact I | ].
   apply SP.vcond_cstar_variant with (R := loop2_var).
@@ -278,11 +274,11 @@ Proof.
 Qed.
 
 Lemma loop2_correct :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   loop2
-  ⟦⟦ err ↑ aequal (VAR "x") 2000000 ⟧⟧.
+  ⟦⟦ err ↑ aequal "x" 2000000 ⟧⟧.
 Proof.
-  apply (SP.vcgen_valid _ loop2_a); [ reflexivity | ].
+  apply (SP.vcgen_valid_unannot _ loop2_a).
   split; [ exact loop2_vcond | ].
   intros r; destruct r as [s | s]; sp_compute; [ tauto | ].
   (* the erroring branch of the body, taken at an invariant state *)
@@ -302,23 +298,23 @@ Qed.
     [n_init = s' "x"] (when [s' "x" > 0]). *)
 
 Definition loop0_body : com :=
-  ASSIGN "x" (PLUS (VAR "x") (VAR "n")) ;;
+  ASSIGN "x" ("x" + "n") ;;
   NONDET "n".
 
 Definition loop0 : com :=
   NONDET "n" ;;
-  ASSIGN "x" (CONST 0) ;;
-  WHILE (GREATER (VAR "n") (CONST 0)) DO loop0_body END.
+  ASSIGN "x" 0 ;;
+  WHILE (GREATER "n" 0) DO loop0_body END.
 
 Definition loop0_inv : assertion :=
-  fun s => 0 <= s "x" /\ "x" \in domf s /\ "n" \in domf s.
+  ("x" ⩾ 0 ∧ def "x" ∧ def "n")%A.
 
-Definition loop0_a : SP.acom :=
-  (SP.NONDET "n" ;;
-   SP.ASSIGN "x" (CONST 0) ;;
-   WHILE ⟨ loop0_inv ⟩ (GREATER (VAR "n") (CONST 0)) DO
-     (SP.ASSIGN "x" (PLUS (VAR "x") (VAR "n")) ;; SP.NONDET "n")
-   END)%acom.
+Definition loop0_a : com :=
+  NONDET "n" ;;
+  ASSIGN "x" 0 ;;
+  WHILE ⟨ loop0_inv ⟩ (GREATER "n" 0) DO
+    (ASSIGN "x" ("x" + "n") ;; NONDET "n")
+  END.
 
 (** The forwards variant is finite here: [x] is [0] before the loop and, after
     one turn, an arbitrary positive value (the nondeterministic [n] that was
@@ -333,7 +329,7 @@ Definition loop0_var (n: nat) : assertion :=
 
 #[local] Hint Unfold loop0_a loop0_inv loop0_var : sp.
 
-Lemma loop0_vcond: SP.vcond (fun _ => True) loop0_a.
+Lemma loop0_vcond: SP.vcond ⊤%A loop0_a.
 Proof.
   apply SP.vcond_seq; [ exact I | ].
   apply SP.vcond_seq; [ exact I | ].
@@ -357,12 +353,11 @@ Proof.
 Qed.
 
 Lemma loop0_correct :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   loop0
-  ⟦⟦ ok ↑ (fun s : store => 0 <= s "x" /\ s "n" <= 0
-                            /\ "x" \in domf s /\ "n" \in domf s) ⟧⟧.
+  ⟦⟦ ok ↑ ("x" ⩾ 0 ∧ "n" ⩽ 0 ∧ def "x" ∧ def "n") ⟧⟧.
 Proof.
-  apply (SP.vcgen_valid _ loop0_a); [ reflexivity | ].
+  apply (SP.vcgen_valid_unannot _ loop0_a).
   split; [ exact loop0_vcond | ].
   intros r; destruct r as [s | s]; sp_compute; [ | tauto ].
   intros [Hnn [Hnp [Hdx Hdn]]]. sp_solve.
@@ -387,20 +382,19 @@ Qed.
 
 Definition client0 : com :=
   loop0 ;;
-  IF (EQUAL (VAR "x") (CONST 2000000)) THEN ERROR END.
+  IF (EQUAL "x" 2000000) THEN ERROR END.
 
-Definition client0_a : SP.acom :=
-  (loop0_a ;; IF (EQUAL (VAR "x") (CONST 2000000)) THEN SP.ERROR END)%acom.
+Definition client0_a : com :=
+  loop0_a ;; IF (EQUAL "x" 2000000) THEN ERROR END.
 
 #[local] Hint Unfold client0_a : sp.
 
 Lemma client0_correct :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   client0
-  ⟦⟦ err ↑ (fun s : store =>
-              s "x" = 2000000 /\ s "n" <= 0 /\ "n" \in domf s) ⟧⟧.
+  ⟦⟦ err ↑ ("x" ≐ 2000000 ∧ "n" ⩽ 0 ∧ def "n") ⟧⟧.
 Proof.
-  apply (SP.vcgen_valid _ client0_a); [ reflexivity | ].
+  apply (SP.vcgen_valid_unannot _ client0_a).
   split.
   - apply SP.vcond_seq; [ exact loop0_vcond | sp_compute; tauto ].
   - (* the error comes from the trailing conditional, not from inside [loop0] *)

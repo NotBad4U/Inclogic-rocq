@@ -31,27 +31,27 @@ Local Open Scope com_scope.
     function. *)
 
 Definition loop1_body : com :=
-  ASSIGN "x" (PLUS (VAR "x") (CONST 1)).
+  ASSIGN "x" ("x" + 1).
 
 Definition loop1 : com :=
-  ASSIGN "x" (CONST 0) ;; (loop1_body ★).
+  ASSIGN "x" 0 ;; (loop1_body ★).
 
 (** Backwards-variant with [P n s := s "x" = Z.of_nat n /\ "x" \in domf s]. *)
 Lemma loop1_achieves2 :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   loop1
-  ⟦⟦ ok ↑ (fun s : store => 0 <= s "x" /\ "x" \in domf s) ⟧⟧.
+  ⟦⟦ ok ↑ ("x" ⩾ 0 ∧ def "x") ⟧⟧.
 Proof.
   unfold loop1.
   pose (Pn := fun (n: nat) (s: store) =>
                 s "x" = Z.of_nat n /\ "x" \in domf s).
-  refine (inc_triple_seq_ok _ (ASSIGN "x" (CONST 0)) (CSTAR loop1_body)
+  refine (inc_triple_seq_ok _ (ASSIGN "x" 0) (CSTAR None loop1_body)
                             (Pn 0%nat) _ _ _).
   - (* [true] x := 0 [ok: P 0] *)
     intros r HQ. destruct r as [s' | s']; [ | exfalso; exact HQ ].
     destruct HQ as [Hx0 Hdom]. unfold Pn in *. cbn in Hx0.
     exists s'. split; [ exact I | ].
-    replace s' with (update "x" (aeval (CONST 0) s') s') at 2.
+    replace s' with (update "x" (aeval 0 s') s') at 2.
     + apply cexec_assign.
     + cbn [aeval]. rewrite <- Hx0. apply update_get. exact Hdom.
   - eapply inc_triple_consequence_gen with (P := Pn 0%nat).
@@ -64,7 +64,7 @@ Proof.
       * split; [ apply update_same | ].
         rewrite dom_update, eqxx. reflexivity.
       * replace s' with
-          (update "x" (aeval (PLUS (VAR "x") (CONST 1)) (update "x" (Z.of_nat n) s'))
+          (update "x" (aeval ("x" + 1) (update "x" (Z.of_nat n) s'))
                        (update "x" (Z.of_nat n) s')) at 2.
         ** apply cexec_assign.
         ** cbn [aeval]. rewrite update_same.
@@ -83,15 +83,15 @@ Qed.
     three unrollings to showcase the unrolling rule, but logically that's
     not needed once [achieves2] is in hand. *)
 Lemma loop1_achieves1 :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   loop1
-  ⟦⟦ ok ↑ (fun s : store => (s "x" = 0 \/ s "x" = 1 \/ s "x" = 2 \/ s "x" = 3)
-                            /\ "x" \in domf s) ⟧⟧.
+  ⟦⟦ ok ↑ (("x" ≐ 0 ∨ "x" ≐ 1 ∨ "x" ≐ 2 ∨ "x" ≐ 3) ∧ def "x") ⟧⟧.
 Proof.
-  eapply inc_triple_consequence_gen with (P := fun _ : store => True).
+  eapply inc_triple_consequence_gen with (P := ⊤%A).
   - unfold aimp; auto.
   - exact loop1_achieves2.
   - intros r HQ. destruct r as [s | s]; [ | exfalso; exact HQ ].
+    cbn [aeval] in *.
     destruct HQ as [Hcase Hdom]. split; [ | exact Hdom ].
     destruct Hcase as [H | [H | [H | H]]]; rewrite H; lia.
 Qed.
@@ -102,11 +102,11 @@ Qed.
     that the error is reachable: [er: x == 2,000,000]. *)
 
 Definition loop2_body : com :=
-  (IF (EQUAL (VAR "x") (CONST 2000000)) THEN ERROR END) ;;
-  ASSIGN "x" (PLUS (VAR "x") (CONST 1)).
+  (IF (EQUAL "x" 2000000) THEN ERROR END) ;;
+  ASSIGN "x" ("x" + 1).
 
 Definition loop2 : com :=
-  ASSIGN "x" (CONST 0) ;; (loop2_body ★).
+  ASSIGN "x" 0 ;; (loop2_body ★).
 
 (** Body advances [x] by 1 when [x < 2,000,000]. *)
 Lemma loop2_body_normal_step:
@@ -125,7 +125,7 @@ Proof.
       rewrite Hne. reflexivity.
     + apply cexec_skip.
   - replace (update "x" (s "x" + 1) s)
-      with (update "x" (aeval (PLUS (VAR "x") (CONST 1)) s) s).
+      with (update "x" (aeval ("x" + 1) s) s).
     + apply cexec_assign.
     + cbn [aeval]. reflexivity.
 Qed.
@@ -180,9 +180,9 @@ Proof.
 Qed.
 
 Lemma loop2_correct :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   loop2
-  ⟦⟦ err ↑ aequal (VAR "x") 2000000 ⟧⟧.
+  ⟦⟦ err ↑ aequal "x" 2000000 ⟧⟧.
 Proof.
   unfold loop2.
   intros r HQ.
@@ -227,13 +227,13 @@ Qed.
     [n_init = s' "x"] (when [s' "x" > 0]). *)
 
 Definition loop0_body : com :=
-  ASSIGN "x" (PLUS (VAR "x") (VAR "n")) ;;
+  ASSIGN "x" ("x" + "n") ;;
   NONDET "n".
 
 Definition loop0 : com :=
   NONDET "n" ;;
-  ASSIGN "x" (CONST 0) ;;
-  WHILE (GREATER (VAR "n") (CONST 0)) DO loop0_body END.
+  ASSIGN "x" 0 ;;
+  WHILE (GREATER "n" 0) DO loop0_body END.
 
 (** Updates on distinct keys commute. *)
 Lemma update_swap:
@@ -253,17 +253,16 @@ Proof.
 Qed.
 
 Lemma loop0_correct :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   loop0
-  ⟦⟦ ok ↑ (fun s : store => 0 <= s "x" /\ s "n" <= 0
-                            /\ "x" \in domf s /\ "n" \in domf s) ⟧⟧.
+  ⟦⟦ ok ↑ ("x" ⩾ 0 ∧ "n" ⩽ 0 ∧ def "x" ∧ def "n") ⟧⟧.
 Proof.
   unfold loop0.
   intros r HQ. destruct r as [s' | s']; [ | exfalso; exact HQ ].
-  destruct HQ as [Hxnn [Hnnp [Hdx Hdn]]].
+  destruct HQ as [Hxnn [Hnnp [Hdx Hdn]]]. cbn [aeval] in *.
   exists s'. split; [ exact I | ].
   (* Use [s' "n" ≤ 0] for the loop-exit [ASSUME]. *)
-  assert (Hexit : beval (NOT (GREATER (VAR "n") (CONST 0))) s' = true).
+  assert (Hexit : beval (NOT (GREATER "n" 0)) s' = true).
   { cbn. assert (Hb : (s' "n" <=? 0) = true)
       by (apply Z.leb_le; exact Hnnp).
     rewrite Hb. reflexivity. }
@@ -273,7 +272,7 @@ Proof.
     { apply cexec_nondet. }
     apply cexec_seq with (update "x" 0 (update "n" (s' "n") s')).
     { replace (update "x" 0 (update "n" (s' "n") s'))
-        with (update "x" (aeval (CONST 0) (update "n" (s' "n") s'))
+        with (update "x" (aeval 0 (update "n" (s' "n") s'))
                           (update "n" (s' "n") s'))
         by (cbn [aeval]; reflexivity).
       apply cexec_assign. }
@@ -291,7 +290,7 @@ Proof.
     { apply cexec_nondet. }
     apply cexec_seq with (update "x" 0 (update "n" (s' "x") s')).
     { replace (update "x" 0 (update "n" (s' "x") s'))
-        with (update "x" (aeval (CONST 0) (update "n" (s' "x") s'))
+        with (update "x" (aeval 0 (update "n" (s' "x") s'))
                           (update "n" (s' "x") s'))
         by (cbn [aeval]; reflexivity).
       apply cexec_assign. }
@@ -349,17 +348,16 @@ Qed.
 
 Definition client0 : com :=
   loop0 ;;
-  IF (EQUAL (VAR "x") (CONST 2000000)) THEN ERROR END.
+  IF (EQUAL "x" 2000000) THEN ERROR END.
 
 Lemma client0_correct :
-  ⟦⟦ fun _ => True ⟧⟧
+  ⟦⟦ ⊤ ⟧⟧
   client0
-  ⟦⟦ err ↑ (fun s : store =>
-              s "x" = 2000000 /\ s "n" <= 0 /\ "n" \in domf s) ⟧⟧.
+  ⟦⟦ err ↑ ("x" ≐ 2000000 ∧ "n" ⩽ 0 ∧ def "n") ⟧⟧.
 Proof.
   unfold client0.
   intros r HQ. destruct r as [s' | s']; [ exfalso; exact HQ | ].
-  destruct HQ as [Hx2M [Hnnp Hdn]].
+  destruct HQ as [Hx2M [Hnnp Hdn]]. cbn [aeval] in *.
   (* [s' "x" = 2,000,000 ≠ 0] forces ["x" \in domf s']. *)
   assert (Hdx : "x" \in domf s').
   { pose proof (fndSome s' "x") as HS.

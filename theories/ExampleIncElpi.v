@@ -8,10 +8,11 @@
       Proof. il_auto. Qed.
 >>
 
-  [il_auto] reifies the command into [SP.acom] with the canonical [Istar]
-  annotation, discharges [vcond], and searches for the post inclusion.  See
-  [IncElpi.v] for how, and for the two facts that make it feasible: the
-  annotation nobody has to invent, and applying rules with Ltac [apply].
+  [il_auto] discharges [vcond] and then searches for the post inclusion.  An
+  unannotated loop ([CSTAR None]) already has the exact post — the union of its
+  iterates — so there is nothing to annotate and nothing to translate.  See
+  [IncElpi.v] for the search, and for the fact that makes it feasible:
+  applying rules with Ltac [apply] rather than coq-elpi's [refine].
 
   ** Coverage
 
@@ -44,18 +45,16 @@ Local Open Scope com_scope.
 (** ** loop1 — Fig 5, lines 18-24: [x := 0; (x := x+1)*] *)
 
 Definition loop1 : com :=
-  ASSIGN "x" (CONST 0) ;; ((ASSIGN "x" (PLUS (VAR "x") (CONST 1))) ★).
+  ASSIGN "x" 0 ;; ((ASSIGN "x" ("x" + 1)) ★).
 
 (** Zero turns. *)
 Lemma loop1_reaches_0 :
-  ⟦⟦ fun _ => True ⟧⟧ loop1
-  ⟦⟦ ok ↑ (fun s : store => s "x" = 0 /\ "x" \in domf s) ⟧⟧.
+  ⟦⟦ ⊤ ⟧⟧ loop1 ⟦⟦ ok ↑ ("x" ≐ 0 ∧ def "x") ⟧⟧.
 Proof. il_auto. Qed.
 
 (** Three turns — the depth is found, not given. *)
 Lemma loop1_reaches_3 :
-  ⟦⟦ fun _ => True ⟧⟧ loop1
-  ⟦⟦ ok ↑ (fun s : store => s "x" = 3 /\ "x" \in domf s) ⟧⟧.
+  ⟦⟦ ⊤ ⟧⟧ loop1 ⟦⟦ ok ↑ ("x" ≐ 3 ∧ def "x") ⟧⟧.
 Proof. il_auto. Qed.
 
 (** ** A branching loop body
@@ -65,12 +64,11 @@ Proof. il_auto. Qed.
     it, so this costs no more than the branch-free case. *)
 
 Definition e1 : com :=
-  ASSIGN "x" (CONST 0) ;;
-  (((IF (EQUAL (VAR "x") (CONST 9)) THEN ERROR END) ;;
-     ASSIGN "x" (PLUS (VAR "x") (CONST 1))) ★).
+  ASSIGN "x" 0 ;;
+  (((IF (EQUAL "x" 9) THEN ERROR END) ;; ASSIGN "x" ("x" + 1)) ★).
 
 Lemma e1_reaches_2 :
-  ⟦⟦ fun _ => True ⟧⟧ e1 ⟦⟦ ok ↑ (fun s : store => s "x" = 2) ⟧⟧.
+  ⟦⟦ ⊤ ⟧⟧ e1 ⟦⟦ ok ↑ "x" ≐ 2 ⟧⟧.
 Proof. il_auto. Qed.
 
 (** ** An error, found
@@ -78,9 +76,9 @@ Proof. il_auto. Qed.
     Loop-free first: [x := 3; if x = 3 then error]. *)
 
 Definition e0 : com :=
-  ASSIGN "x" (CONST 3) ;; (IF (EQUAL (VAR "x") (CONST 3)) THEN ERROR END).
+  ASSIGN "x" 3 ;; (IF (EQUAL "x" 3) THEN ERROR END).
 
-Lemma e0_bug : ⟦⟦ fun _ => True ⟧⟧ e0 ⟦⟦ err ↑ (fun s : store => s "x" = 3) ⟧⟧.
+Lemma e0_bug : ⟦⟦ ⊤ ⟧⟧ e0 ⟦⟦ err ↑ "x" ≐ 3 ⟧⟧.
 Proof. il_auto. Qed.
 
 (** [loop2] of Fig 5, lines 32-38, with the bound brought within unrolling
@@ -89,12 +87,11 @@ Proof. il_auto. Qed.
     state at which the body faults. *)
 
 Definition loop2s : com :=
-  ASSIGN "x" (CONST 0) ;;
-  (((IF (EQUAL (VAR "x") (CONST 3)) THEN ERROR END) ;;
-     ASSIGN "x" (PLUS (VAR "x") (CONST 1))) ★).
+  ASSIGN "x" 0 ;;
+  (((IF (EQUAL "x" 3) THEN ERROR END) ;; ASSIGN "x" ("x" + 1)) ★).
 
 Lemma loop2s_bug :
-  ⟦⟦ fun _ => True ⟧⟧ loop2s ⟦⟦ err ↑ (fun s : store => s "x" = 3) ⟧⟧.
+  ⟦⟦ ⊤ ⟧⟧ loop2s ⟦⟦ err ↑ "x" ≐ 3 ⟧⟧.
 Proof. il_auto. Qed.
 
 (** ** loop0 — Fig 5, lines 3-10, with [NONDET]
@@ -107,26 +104,25 @@ Proof. il_auto. Qed.
     solving for it. *)
 
 Definition loop0 : com :=
-  NONDET "n" ;; ASSIGN "x" (CONST 0) ;;
-  WHILE (GREATER (VAR "n") (CONST 0)) DO
-    ASSIGN "x" (PLUS (VAR "x") (VAR "n")) ;; NONDET "n"
+  NONDET "n" ;; ASSIGN "x" 0 ;;
+  WHILE (GREATER "n" 0) DO
+    ASSIGN "x" ("x" + "n") ;; NONDET "n"
   END.
 
 Lemma loop0_reaches_5 :
-  ⟦⟦ fun _ => True ⟧⟧ loop0
-  ⟦⟦ ok ↑ (fun s : store => s "x" = 5 /\ s "n" <= 0
-                            /\ "x" \in domf s /\ "n" \in domf s) ⟧⟧.
+  ⟦⟦ ⊤ ⟧⟧ loop0
+  ⟦⟦ ok ↑ ("x" ≐ 5 ∧ "n" ⩽ 0 ∧ def "x" ∧ def "n") ⟧⟧.
 Proof. il_auto. Qed.
 
 (** ** Known gap: [client0]
 
 <<
   Definition client0 : com :=
-    loop0 ;; IF (EQUAL (VAR "x") (CONST 5)) THEN ERROR END.
+    loop0 ;; IF (EQUAL "x" 5) THEN ERROR END.
 
   Lemma client0_bug :
-    ⟦⟦ fun _ => True ⟧⟧ client0
-    ⟦⟦ err ↑ (fun s : store => s "x" = 5 /\ s "n" <= 0 /\ "n" \in domf s) ⟧⟧.
+    ⟦⟦ ⊤ ⟧⟧ client0
+    ⟦⟦ err ↑ ("x" ≐ 5 ∧ "n" ⩽ 0 ∧ def "n") ⟧⟧.
   Proof. il_auto. Qed.   (* fails *)
 >>
 
