@@ -16,7 +16,18 @@
   ## Extra packages to have around.  The toolbox already puts `coq-lsp` and
   ## the Coq-era `vscoq-language-server` in the shell; this adds the Rocq one,
   ## which is what the VsRocq editor extension talks to.
-  buildInputs = [ "vsrocq-language-server" ];
+  ##
+  ## `compcert` comes from `.nix/coq-overlays/compcert` (nixpkgs stops at 3.17,
+  ## which does not support Rocq 9.2).  It brings both `ccomp`/`clightgen` and
+  ## the CompCert Rocq development, the latter on ROCQPATH under the `compcert`
+  ## logical prefix, so `From compcert Require Import Common.Values.` resolves.
+  ## CompCert is released under a non-commercial licence, which Nix classifies
+  ## as unfree: `nix-build`/`nix-shell` need `NIXPKGS_ALLOW_UNFREE=1` in the
+  ## environment.
+  buildInputs = [
+    "vsrocq-language-server"
+    "compcert"
+  ];
 
   ## select an entry to build in the following `bundles` set
   ## defaults to "default"

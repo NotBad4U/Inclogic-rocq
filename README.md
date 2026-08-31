@@ -82,8 +82,9 @@ nix-env -iA nixpkgs.cachix && cachix use coq && cachix use coq-community && cach
 Then, from the root of the repository:
 
 ```sh
+export NIXPKGS_ALLOW_UNFREE=1   # CompCert's non-commercial licence is unfree for Nix
 nix-shell                       # dev shell with rocq, mathcomp, relation-algebra,
-                                # rocq-elpi, coq-lsp and vsrocq (`vsrocqtop`)
+                                # rocq-elpi, compcert, coq-lsp and vsrocq (`vsrocqtop`)
 nix-build                       # build and install the library into the Nix store
 ```
 
@@ -106,6 +107,21 @@ the first to support Rocq 9.2; and
 [`vsrocq-language-server`](.nix/rocq-overlays/vsrocq-language-server/default.nix) widens vsrocq to
 Rocq 9.2 (upstream 2.4.3 already declares `< 9.3~`) and builds it against `rocq-core`. Both of the
 latter can be dropped once nixpkgs catches up.
+
+A fourth one, [`compcert`](.nix/coq-overlays/compcert/default.nix), lives in
+[`.nix/coq-overlays/`](.nix/coq-overlays) instead: CompCert is driven by its own `./configure`
+rather than by `rocq makefile`, so nixpkgs packages it under `coqPackages`. The overlay adds
+release 3.18, the first whose `./configure` accepts Rocq 9.2 (nixpkgs stops at 3.17, which caps
+out at Rocq 9.1). It provides the `ccomp` and `clightgen` binaries as well as the CompCert Rocq
+development, the latter on `ROCQPATH` under the `compcert` logical prefix, so that
+
+```coq
+From compcert Require Import Common.Values.
+```
+
+resolves in both `nix-shell` and `nix-build`. CompCert is distributed under a non-commercial
+licence, which Nix classifies as unfree, hence the `NIXPKGS_ALLOW_UNFREE=1` above; the generated
+CI workflows already set it. Drop this overlay once nixpkgs ships 3.18.
 
 ### Build
 
