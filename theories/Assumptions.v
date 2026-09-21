@@ -1,4 +1,34 @@
-From IncLogic Require Import Hoare Inc Sil.
+From IncLogic Require Import Core ILang Hoare Inc Sil.
+
+(* Language-generic core.
+
+   These hold for *every* instance of [Lang.t] at once.  Note that the
+   Clight instance ([CLang.v]) is deliberately not checked here: CompCert is
+   not axiom-free — its float semantics rest on Flocq's classical reals, so
+   [Cop.sem_binary_operation] alone already depends on [Classical_Prop.classic],
+   [functional_extensionality_dep] and [ClassicalDedekindReals.*].  Anything
+   proved about C inherits those four; the core and the IMP instance do not. *)
+
+Print Assumptions Core.cexec_iff_reds.
+
+Print Assumptions Core.cexec_cstar_iff_star.
+
+Print Assumptions Core.cexec_cstar_err_iff.
+
+Print Assumptions Core.cexec_unannot.
+
+Print Assumptions Core.cstar_seq_comm.
+
+(* The IMP instance, and the proof that instantiating the generic core at it
+   gives back exactly the semantics of [Imp.v]. *)
+
+Print Assumptions ILang.cexec_iff.
+
+Print Assumptions ILang.ImpLaws.
+
+Print Assumptions ILang.ImpFrame.
+
+
 
 (* Hoare *)
 

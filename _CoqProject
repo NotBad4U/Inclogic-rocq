@@ -1,7 +1,10 @@
 -R theories IncLogic
 theories/Sequences.v
 theories/RelKleene.v
+theories/Lang.v
+theories/Core.v
 theories/Imp.v
+theories/ILang.v
 theories/Hoare.v
 theories/Inc.v
 theories/Sil.v
@@ -12,3 +15,8 @@ theories/KatIncImp.v
 theories/IncElpi.v
 theories/ExampleIncElpi.v
 theories/Assumptions.v
+theories/CFrag.v
+theories/CEval.v
+theories/CLang.v
+theories/ExampleCGen.v
+theories/ExampleCFrag.v
