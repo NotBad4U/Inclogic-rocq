@@ -8,6 +8,7 @@
   mkRocqDerivation,
   stdlib,
   mathcomp-boot,
+  mathcomp-algebra,
   mathcomp-finmap,
   relation-algebra,
   rocq-elpi,
@@ -27,6 +28,8 @@ mkRocqDerivation {
   propagatedBuildInputs = [
     stdlib
     mathcomp-boot
+    ## `ssralg`/`ssrnum` (and, transitively, `order`, `fingroup`)
+    mathcomp-algebra
     mathcomp-finmap
     relation-algebra
     rocq-elpi
