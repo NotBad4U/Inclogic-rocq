@@ -1,5 +1,5 @@
 From mathcomp Require Import ssreflect ssrfun ssrbool eqtype choice ssrnat.
-From mathcomp Require Import ssralg ssrnum order finmap finset.
+From mathcomp Require Import ssralg ssrnum monoid order finmap finset.
 
 Local Open Scope fset_scope.
 Local Open Scope fmap_scope.
@@ -44,7 +44,7 @@ End State.
    (partial) denotation. The concrete arithmetic is chosen only when the
    language is instantiated; see the [*Ops] sections below. *)
 Section Prog.
-Context (varType valType : choiceType) (loc : {fset valType}).
+Context (varType : choiceType) (valType : monoidType) (loc : {fset valType}).
 Context (op : Type) (denote : op -> valType -> valType -> option valType).
 
 Abbreviation store := (store varType valType).
@@ -63,7 +63,7 @@ Inductive com :=
   | AssignStore : varType -> expr -> com
   | AssignHeap : expr -> expr -> com
   | Nondet : varType -> com
-  | Assume : sprop -> com
+  | Assume : expr -> com
   | Error : com
   | Seq : com -> com -> com
   | Local : varType -> com -> com
@@ -71,6 +71,7 @@ Inductive com :=
   | Star : com -> com
   | Alloc : varType -> com
   | Free : varType -> com.
+
 
 Fixpoint eval_expr (e : expr) (sh : state) : option valType :=
   match e with
@@ -111,16 +112,18 @@ Proof. by case: r. Qed.
 Reserved Notation "st0 =[ c ]=> st1"
   (at level 40, c at level 99, st1 at level 39).
 
+Definition null : valType := one.
+
 Inductive cexec: state -> com -> result -> Prop :=
 | cexec_skip: forall s,
   s =[ Skip ]=> RNormal s
 | cexec_error: forall s,
   s =[ Error ]=> RError s
-| cexec_assign_store: forall (s : state) x a,
+| cexec_assign_store: forall s x a,
   s =[ AssignStore x a ]=>
     if eval_expr a s is Some v then RNormal (s.1.[x <- v], s.2)
     else RError s
-| cexec_assign_heap: forall (s : state) x y,
+| cexec_assign_heap: forall s x y,
   s =[ AssignHeap x y ]=>
     if (olet l  := eval_expr x s in
         olet l' := insub l in
@@ -130,8 +133,8 @@ Inductive cexec: state -> com -> result -> Prop :=
 | cexec_nondet: forall s x any,
   s =[ Nondet x ]=> RNormal (s.1.[x <- any], s.2)
 | cexec_assume: forall s b,
-  b s.1 s.2 ->
-  s =[ Assume b ]=> ret s
+  s =[ Assume b ]=> if eval_expr b s == Some null then RError s
+                   else ret s
 | cexec_seq: forall c1 c2 s s' r,
   s  =[ c1 ]=> RNormal s' ->
   s' =[ c2 ]=> r ->
@@ -145,25 +148,19 @@ Inductive cexec: state -> com -> result -> Prop :=
 | cexec_choice_right: forall s c1 c2 r,
   s =[ c2 ]=> r ->
   s =[ Choice c1 c2 ]=> r
-| cexec_local: forall (s: state) r x c v, (* FIXME: why need the type on s ?? *)
-  let restore := fun s' : state =>
-    (if s.1.[? x] is Some v0 then s'.1.[x <- v0] else s'.1.[~ x], s'.2)
-  in
-  (s.1.[x <- v], s.2) =[ c ]=> r ->
-  s =[ Local x c ]=> fmap restore r
+| cexec_local: forall s r x c v, (* FIXME: why need the type on s ?? *)
+  s =[ c ]=> r ->
+  (s.1.[x <- v], s.2) =[ Local x c ]=> fmap (fun s' => (s'.1.[x <- v], s'.2)) r
 (*
   [[C*]] = ⋃_i [[C^i]], with [[C^0]] = Skip and [[C^i+1]] = [[C ; C^i]] 
   It differ from the @Imp.v because IL allow loop to fail but SIL no. 
 *)
-| cexec_star: forall (s : state) c r n,
+| cexec_star: forall s c r n,
   s =[ iter n (Seq c) Skip ]=> r ->
   s =[ Star c ]=> r
 | cexec_alloc: forall s x l any,
   l \notin domf s.2 ->
   s  =[ Alloc x ]=> RNormal (s.1.[x <- val l], s.2.[l <- any]) (* Following C malloc that put any value *)
-| cexec_alloc_error: forall s x l,
-  l \in domf s.2 ->
-  s  =[ Alloc x ]=> RError s
 | cexec_free: forall (s : state) x,
   s  =[ Free x ]=>
     if (olet v := s.1.[? x] in
