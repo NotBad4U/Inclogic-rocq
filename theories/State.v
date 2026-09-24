@@ -52,6 +52,7 @@ Abbreviation store := (store varType valType).
 Abbreviation heap := (heap valType loc).
 Abbreviation sprop := (sprop varType valType loc).
 Abbreviation state := (state varType valType loc).
+Abbreviation mapsnot := (mapsnot varType valType loc).
 
 Inductive expr :=
     Deref : expr -> expr
@@ -180,152 +181,39 @@ Inductive cexec: state -> com -> result -> Prop :=
       is Some s' then RNormal s' else RError s
 where "st0 =[ c ]=> st1" := (cexec st0 c st1).
 
-(* [Free x] is deterministic: its only outcome is the one of [cexec_free]. *)
-Lemma cexec_freeE (s : state) x r :
-  s =[ Free x ]=> r ->
-  r = if (olet v := s.1.[? x] in
-          olet l := insub v in
-          if l \in domf s.2 then Some (s.1, s.2.[~ l]) else None)
-      is Some s' then RNormal s' else RError s.
-Proof. by move=> H; inversion H. Qed.
-
-Lemma free_dangling (s : state) x r :
-  (forall v l, s.1.[? x] = Some v -> insub v = Some l -> l \notin domf s.2) ->
-  s =[ Free x ]=> r <-> r = RError s.
-Proof.
-move=> Hd; split=> [/cexec_freeE ->|->]; last first.
-  have := cexec_free s x.
-  case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
-  by rewrite (negbTE (Hd _ _ Ex El)).
-case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
-by rewrite (negbTE (Hd _ _ Ex El)).
-Qed.
-
-Lemma free_null (s : state) x r :
-  null \notin loc -> s.1.[? x] = Some null ->
-  s =[ Free x ]=> r <-> r = RError s.
-Proof.
-move=> Hnull Hx; apply: free_dangling => v l.
-by rewrite Hx => -[<-]; rewrite insubN.
-Qed.
-
-Lemma free_unallocated_err (s : state) x (l : loc) r :
-  s.1.[? x] = Some (val l) -> l \notin domf s.2 ->
-  s =[ Free x ]=> r <-> r = RError s.
-Proof.
-move=> Hx Hl; apply: free_dangling => v l'.
-by rewrite Hx => -[<-]; rewrite valK => -[<-].
-Qed.
-
-Lemma free_seq_error (s : state) x (l : loc) v c r :
-  s.1.[? x] = Some (val l) -> s.2.[? l] = Some v ->
-  (forall r', (s.1, s.2.[~ l]) =[ c ]=> r' <-> r' = RError (s.1, s.2.[~ l])) ->
-  s =[ Seq (Free x) c ]=> r <-> r = RError (s.1, s.2.[~ l]).
-Proof.
-move=> Hx Hv H2; have Hl : l \in domf s.2 by rewrite -fndSome Hv.
-have H1 : s =[ Free x ]=> RNormal (s.1, s.2.[~ l]).
-  by have := cexec_free s x; rewrite Hx /= valK /= Hl.
-split=> [H|->]; last by apply: cexec_seq H1 _; apply/H2.
-inversion H as [| | | | | |c1 c2 s0 s' r' H1' H2'|c1 c2 s0 sf H1'| | | | | |];
-  subst; move/cexec_freeE: H1'; rewrite Hx /= valK /= Hl // => -[Es].
-by apply/H2; move: H2'; rewrite Es.
-Qed.
-
-Lemma double_free (s : state) x (l : loc) v r :
-  s.1.[? x] = Some (val l) -> s.2.[? l] = Some v ->
-  s =[ Seq (Free x) (Free x) ]=> r <-> r = RError (s.1, s.2.[~ l]).
-Proof.
-move=> Hx Hv; apply: (free_seq_error _ _ _ _ _ _ Hx Hv) => r'.
-by apply: free_unallocated_err; [exact: Hx | exact/negbT/mem_remfF].
-Qed.
-
-Lemma write_unallocated (s : state) a e (l : loc) r :
-  eval_expr a s = Some (val l) -> l \notin domf s.2 ->
-  s =[ AssignHeap a e ]=> r <-> r = RError s.
-Proof.
-move=> Ha Hl; split=> [H|->]; [inversion H | have := cexec_assign_heap s a e];
-  by rewrite Ha /= valK /=; case: eval_expr => //= v; rewrite (negbTE Hl).
-Qed.
-
-Lemma use_after_free (s : state) x (l : loc) v e r :
-  s.1.[? x] = Some (val l) -> s.2.[? l] = Some v ->
-  s =[ Seq (Free x) (AssignHeap (Var x) e) ]=> r <->
-  r = RError (s.1, s.2.[~ l]).
-Proof.
-move=> Hx Hv; apply: (free_seq_error _ _ _ _ _ _ Hx Hv) => r'.
-by apply: write_unallocated; [exact: Hx | exact/negbT/mem_remfF].
-Qed.
-
-(* x := malloc(); c, where c fails whenever x points to an allocated cell l,
-   raising the error once l has been freed: the heap is then back to its
-   initial content and x dangles at l. *)
-Lemma alloc_seq_error (s : state) x c r :
-  (forall (s' : state) (l : loc) v r', s'.1.[? x] = Some (val l) ->
-     s'.2.[? l] = Some v ->
-     s' =[ c ]=> r' <-> r' = RError (s'.1, s'.2.[~ l])) ->
-  s =[ Seq (Alloc x) c ]=> r <->
-  exists l : loc, l \notin domf s.2 /\ r = RError (s.1.[x <- val l], s.2).
-Proof.
-move=> Hc.
-(* Whatever l and any Alloc x picked, the rest of the program errors. *)
-have Hrun (l : loc) any r' : l \notin domf s.2 ->
-    (s.1.[x <- val l], s.2.[l <- any]) =[ c ]=> r' <->
-    r' = RError (s.1.[x <- val l], s.2).
-  move=> Hl; rewrite (Hc _ l any).
-  - by rewrite /= fnd_set eqxx.
-  - by rewrite /= fnd_set eqxx.
-  - by rewrite /= remf1_set eqxx remf1_id.
-split=> [H|[l [Hl ->]]].
-- inversion H as [| | | | | |c1 c2 s0 s' r' Ha H'|c1 c2 s0 sf Ha| | | | | |];
-    subst; last by inversion Ha.
-  inversion Ha as [| | | | | | | | | | | |? ? l any Hl|]; subst.
-  by exists l; split=> //; apply/(Hrun _ any).
-- by apply: cexec_seq (cexec_alloc _ _ _ null Hl) _; apply/Hrun.
-Qed.
-
-(* Double free: x := malloc(); free(x); free(x) always ends in an error,
-   raised by the second free. *)
-Corollary double_free_ret_error (s : state) x r :
-  s =[ Seq (Alloc x) (Seq (Free x) (Free x)) ]=> r <->
-  exists l : loc, l \notin domf s.2 /\ r = RError (s.1.[x <- val l], s.2).
-Proof. by apply: alloc_seq_error => s' l v r'; exact: double_free. Qed.
-
-(* Use after free: x := malloc(); free(x); *x := e always ends in an error,
-   raised by the write. *)
-Corollary use_after_free_ret_error (s : state) x e r :
-  s =[ Seq (Alloc x) (Seq (Free x) (AssignHeap (Var x) e)) ]=> r <->
-  exists l : loc, l \notin domf s.2 /\ r = RError (s.1.[x <- val l], s.2).
-Proof. by apply: alloc_seq_error => s' l v r'; exact: use_after_free. Qed.
-
-(* Programs c1 and c2 agree on the outcome r from the same input state s *)
-Definition cmd_equiv (s : state) (c1 c2 : com) (r : result) : Prop :=
-  s =[ c1 ]=> r <-> s =[ c2 ]=> r.
-
-Notation "s =[ c1 ~ c2 ]=> r" := (cmd_equiv s c1 c2 r)
-  (at level 40, c1 at level 99, c2 at level 99, r at level 39).
-
-(* Two commands are equivalent when, from every state, they have the same
-   outcomes, normal and erroneous alike. *)
-Definition cequiv (c1 c2 : com) : Prop :=
-  forall (s : state) r, s =[ c1 ~ c2 ]=> r.
-
-#[global] Instance cequiv_equiv : Equivalence cequiv.
-Proof.
-split=> [c|c1 c2 E|c1 c2 c3 E1 E2] s r; rewrite /cmd_equiv //.
-- exact: iff_sym (E s r).
-- exact: iff_trans (E1 s r) (E2 s r).
-Qed.
-
-(* Equivalent commands can be exchanged inside an execution judgement. *)
-#[global] Instance cexec_proper : Proper (eq ==> cequiv ==> eq ==> iff) cexec.
-Proof. by move=> s _ <- c c' E r _ <-; apply: E. Qed.
-
-#[global] Instance cmd_equiv_proper :
-  Proper (eq ==> cequiv ==> cequiv ==> eq ==> iff) cmd_equiv.
-Proof. by move=> s _ <- c1 c1' E1 c2 c2' E2 r _ <-; rewrite /cmd_equiv E1 E2. Qed.
+(* Inversion lemmas for [cexec]. *)
 
 Lemma cexec_skipE (s : state) r : s =[ Skip ]=> r <-> r = RNormal s.
 Proof. by split=> [H|->]; [inversion H | exact: cexec_skip]. Qed.
+
+Lemma cexec_errorE (s : state) r : s =[ Error ]=> r <-> r = RError s.
+Proof. by split=> [H|->]; [inversion H | exact: cexec_error]. Qed.
+
+Lemma cexec_assign_storeE (s : state) x a r :
+  s =[ AssignStore x a ]=> r <->
+  r = if eval_expr a s is Some v then RNormal (s.1.[x <- v], s.2) else RError s.
+Proof. by split=> [H|->]; [inversion H | exact: cexec_assign_store]. Qed.
+
+Lemma cexec_assign_heapE (s : state) a e r :
+  s =[ AssignHeap a e ]=> r <->
+  r = if (olet l  := eval_expr a s in
+          olet l' := insub l in
+          olet v  := eval_expr e s in
+          if l' \in domf s.2 then Some (s.1, s.2.[l' <- v]) else None)
+        is Some s' then RNormal s' else RError s.
+Proof. by split=> [H|->]; [inversion H | exact: cexec_assign_heap]. Qed.
+
+Lemma cexec_nondetE (s : state) x r :
+  s =[ Nondet x ]=> r <-> exists any, r = RNormal (s.1.[x <- any], s.2).
+Proof.
+split=> [H|[any ->]]; last exact: cexec_nondet.
+by inversion H as [| | | |? ? any| | | | | | | | |]; exists any.
+Qed.
+
+Lemma cexec_assumeE (s : state) b r :
+  s =[ Assume b ]=> r <->
+  r = if eval_expr b s == Some null then RError s else RNormal s.
+Proof. by split=> [H|->]; [inversion H | exact: cexec_assume]. Qed.
 
 Lemma cexec_seqE (s : state) c1 c2 r :
   s =[ Seq c1 c2 ]=> r <->
@@ -355,6 +243,52 @@ Proof.
 split=> [H|[n]]; last exact: cexec_star.
 by inversion H as [| | | | | | | | | | |? ? ? n Hn| |]; exists n.
 Qed.
+
+Lemma cexec_allocE (s : state) x r :
+  s =[ Alloc x ]=> r <->
+  exists (l : loc) any, l \notin domf s.2 /\
+    r = RNormal (s.1.[x <- val l], s.2.[l <- any]).
+Proof.
+split=> [H|[l [any [Hl ->]]]]; last exact: cexec_alloc.
+by inversion H as [| | | | | | | | | | | |? ? l any Hl|]; exists l, any.
+Qed.
+
+Lemma cexec_freeE (s : state) x r :
+  s =[ Free x ]=> r <->
+  r = if (olet v := s.1.[? x] in
+          olet l := insub v in
+          if l \in domf s.2 then Some (s.1, s.2.[~ l]) else None)
+        is Some s' then RNormal s' else RError s.
+Proof. by split=> [H|->]; [inversion H | exact: cexec_free]. Qed.
+
+Section CmdEquiv.
+
+(* Programs c1 and c2 agree on the outcome r from the same input state s *)
+Definition cmd_equiv (s : state) (c1 c2 : com) (r : result) : Prop :=
+  s =[ c1 ]=> r <-> s =[ c2 ]=> r.
+
+Notation "s =[ c1 ~ c2 ]=> r" := (cmd_equiv s c1 c2 r)
+  (at level 40, c1 at level 99, c2 at level 99, r at level 39).
+
+(* Two commands are equivalent when, from every state, they have the same
+   outcomes, normal and erroneous alike. *)
+Definition cequiv (c1 c2 : com) : Prop :=
+  forall (s : state) r, s =[ c1 ~ c2 ]=> r.
+
+#[global] Instance cequiv_equiv : Equivalence cequiv.
+Proof.
+split=> [c|c1 c2 E|c1 c2 c3 E1 E2] s r; rewrite /cmd_equiv //.
+- exact: iff_sym (E s r).
+- exact: iff_trans (E1 s r) (E2 s r).
+Qed.
+
+(* Equivalent commands can be exchanged inside an execution judgement. *)
+#[global] Instance cexec_proper : Proper (eq ==> cequiv ==> eq ==> iff) cexec.
+Proof. by move=> s _ <- c c' E r _ <-; apply: E. Qed.
+
+#[global] Instance cmd_equiv_proper :
+  Proper (eq ==> cequiv ==> cequiv ==> eq ==> iff) cmd_equiv.
+Proof. by move=> s _ <- c1 c1' E1 c2 c2' E2 r _ <-; rewrite /cmd_equiv E1 E2. Qed.
 
 Lemma seq_skipl c : cequiv (Seq Skip c) c.
 Proof.
@@ -464,9 +398,440 @@ split.
 - by case/seq_starr=> n /iter_seq_comm H; apply/seq_starl; exists n.
 Qed.
 
-(* The same law as a [cequiv], so it can be used with [rewrite]. *)
 Lemma cequiv_star_seq_comm c : cequiv (Seq (Star c) c) (Seq c (Star c)).
 Proof. exact: star_seq_comm. Qed.
+
+End CmdEquiv.
+
+Section MemoryViolation.
+
+(** Faulty commands err in place. *)
+
+(* free(x) errs in place when x is dangling. *)
+Lemma free_err x (s : state) r :
+  (forall v l, s.1.[? x] = Some v -> insub v = Some l -> l \notin domf s.2) ->
+  s =[ Free x ]=> r <-> r = RError s.
+Proof.
+move=> Hd; rewrite cexec_freeE.
+case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
+by rewrite (negbTE (Hd _ _ Ex El)).
+Qed.
+
+Lemma free_null (s : state) x r :
+  null \notin loc -> s.1.[? x] = Some null ->
+  s =[ Free x ]=> r <-> r = RError s.
+Proof.
+move=> Hnull Hx; apply: free_err => v l.
+by rewrite Hx => -[<-]; rewrite insubN.
+Qed.
+
+Lemma mapsnot_dangling x (s : state) :
+  mapsnot x s.1 s.2 ->
+  forall v l, s.1.[? x] = Some v -> insub v = Some l -> l \notin domf s.2.
+Proof. by case=> l [Hx Hl] v l'; rewrite Hx => -[<-]; rewrite valK => -[<-]. Qed.
+
+Lemma free_mapsnot x (s : state) r :
+  mapsnot x s.1 s.2 -> s =[ Free x ]=> r <-> r = RError s.
+Proof. by move/mapsnot_dangling; exact: free_err. Qed.
+
+Lemma free_allocated (s : state) x (l : loc) r :
+  s.1.[? x] = Some (val l) -> l \in domf s.2 ->
+  s =[ Free x ]=> r <-> r = RNormal (s.1, s.2.[~ l]).
+Proof. by move=> Hx Hl; rewrite cexec_freeE Hx /= valK /= Hl. Qed.
+
+(* free(x) errs in place exactly when x holds no location or x holds an unallocated one. *)
+Lemma free_errE (s : state) x :
+  (forall r, s =[ Free x ]=> r <-> r = RError s) <->
+  (forall v, s.1.[? x] = Some v -> v \notin loc) \/ mapsnot x s.1 s.2.
+Proof.
+split=> [H|[Hn|Hd] r]; last 2 first.
+- by apply: free_err => v l /Hn Hv; rewrite insubN.
+- exact: free_mapsnot.
+case Ex: s.1.[? x] => [v|]; last by left.
+case: (boolP (v \in loc)) => Hv; last by left=> _ [<-].
+have Hx : s.1.[? x] = Some (val (Sub v Hv : loc)) by rewrite Ex SubK.
+case: (boolP (Sub v Hv \in domf s.2)) => Hdom; last by right; exists (Sub v Hv).
+by move/H: ((free_allocated _ _ _ _ Hx Hdom).2 erefl).
+Qed.
+
+Lemma write_unallocated (s : state) a e (l : loc) r :
+  eval_expr a s = Some (val l) -> l \notin domf s.2 ->
+  s =[ AssignHeap a e ]=> r <-> r = RError s.
+Proof.
+move=> Ha Hl; rewrite cexec_assign_heapE Ha /= valK /=.
+by case: eval_expr => //= v; rewrite (negbTE Hl).
+Qed.
+
+(* *x := e errs in place on a dangling x. *)
+Lemma write_dangling x e (s : state) r :
+  (forall v l, s.1.[? x] = Some v -> insub v = Some l -> l \notin domf s.2) ->
+  s =[ AssignHeap (Var x) e ]=> r <-> r = RError s.
+Proof.
+move=> Hd; rewrite cexec_assign_heapE /=.
+case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
+by case: eval_expr => //= w; rewrite (negbTE (Hd _ _ Ex El)).
+Qed.
+
+(* y := *x errs in place on a dangling x. *)
+Lemma read_dangling x y (s : state) r :
+  (forall v l, s.1.[? x] = Some v -> insub v = Some l -> l \notin domf s.2) ->
+  s =[ AssignStore y (Deref (Var x)) ]=> r <-> r = RError s.
+Proof.
+move=> Hd; rewrite cexec_assign_storeE /=.
+case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
+by rewrite (not_fnd (Hd _ _ Ex El)).
+Qed.
+
+Lemma free_dangles (s s' : state) x y :
+  s.1.[? x] = s.1.[? y] -> s =[ Free y ]=> RNormal s' -> mapsnot x s'.1 s'.2.
+Proof.
+move=> Hxy /cexec_freeE; rewrite -Hxy.
+case Ex: s.1.[? x] => [v|] //=; case: insubP => [l _ Ev|] //=.
+by case: ifP => // _ [->]; exists l; rewrite /= Ex Ev mem_remfF.
+Qed.
+
+Lemma mapsnot_free x y (s1 s2 : state) :
+  mapsnot x s1.1 s1.2 -> s1 =[ Free y ]=> RNormal s2 -> mapsnot x s2.1 s2.2.
+Proof.
+case=> l [Hx Hl] /cexec_freeE.
+case: s1.1.[? y] => [v|] //=; case: (insub v) => [l'|] //=.
+by case: ifP => // _ [->]; exists l; rewrite /= Hx mem_remf1 (negbTE Hl) andbF.
+Qed.
+
+Lemma mapsnot_assign_store x y a : x != y ->
+  forall s1 s2 : state,
+  mapsnot x s1.1 s1.2 -> s1 =[ AssignStore y a ]=> RNormal s2 -> mapsnot x s2.1 s2.2.
+Proof.
+move=> Hxy s1 s2 [l [Hx Hl]] /cexec_assign_storeE.
+by case: eval_expr => [v|] //= [->]; exists l; rewrite /= fnd_set (negbTE Hxy) Hx.
+Qed.
+
+Lemma mapsnot_assign_heap x a e (s1 s2 : state) :
+  mapsnot x s1.1 s1.2 -> s1 =[ AssignHeap a e ]=> RNormal s2 -> mapsnot x s2.1 s2.2.
+Proof.
+case=> l [Hx Hl] /cexec_assign_heapE.
+case: (eval_expr a s1) => [va|] //=; case: (insub va) => [la|] //=.
+case: (eval_expr e s1) => [ve|] //=; case: ifP => // Ha [->].
+exists l; rewrite mem_setf inE negb_or Hl andbT; split=> //.
+by apply: contraNneq Hl => ->.
+Qed.
+
+Lemma skip_inv (p : sprop) (s1 s2 : state) :
+  p s1.1 s1.2 -> s1 =[ Skip ]=> RNormal s2 -> p s2.1 s2.2.
+Proof. by move=> H /cexec_skipE [->]. Qed.
+
+Lemma keep_mapsnot {x P} :
+  (forall s1 s2 : state,
+    mapsnot x s1.1 s1.2 -> s1 =[ P ]=> RNormal s2 -> mapsnot x s2.1 s2.2) ->
+  forall s1 s2 : state, mapsnot x s1.1 s1.2 -> s1 =[ P ]=> RNormal s2 ->
+  forall v l, s2.1.[? x] = Some v -> insub v = Some l -> l \notin domf s2.2.
+Proof. by move=> K s1 s2 H1 /(K _ _ H1) /mapsnot_dangling. Qed.
+
+Lemma seq_errorE (s : state) P r :
+  s =[ Seq P Error ]=> r <->
+  exists s', r = RError s' /\ (s =[ P ]=> RNormal s' \/ s =[ P ]=> RError s').
+Proof.
+rewrite cexec_seqE; split=> [[[s' [H /cexec_errorE ->]]|[sf [H ->]]]|[s' [-> [H|H]]]].
+- by exists s'; split=> //; left.
+- by exists sf; split=> //; right.
+- by left; exists s'; split=> //; exact/cexec_errorE.
+- by right; exists s'.
+Qed.
+
+Lemma seq_err_in_place (p : sprop) P c (s : state) r :
+  (forall s', s =[ P ]=> RNormal s' -> p s'.1 s'.2) ->
+  (forall (s' : state) r', p s'.1 s'.2 -> s' =[ c ]=> r' <-> r' = RError s') ->
+  s =[ Seq P c ]=> r <-> s =[ Seq P Error ]=> r.
+Proof.
+move=> HP Hc; rewrite !cexec_seqE.
+split=> -[[s' [H1 H2]]|H]; [left | by right | left | by right]; exists s'.
+  by split=> //; move/(Hc _ _ (HP _ H1)): H2 => ->; exact: cexec_error.
+by split=> //; apply/(Hc _ _ (HP _ H1)); move/cexec_errorE: H2.
+Qed.
+
+Lemma free_dangling x P (s : state) r :
+  (forall s' : state, s =[ P ]=> RNormal s' ->
+    forall v l, s'.1.[? x] = Some v -> insub v = Some l -> l \notin domf s'.2) ->
+  s =[ Seq P (Free x) ]=> r <-> s =[ Seq P Error ]=> r.
+Proof.
+move=> HP; apply: (seq_err_in_place
+  (fun st h => forall v l, st.[? x] = Some v -> insub v = Some l -> l \notin domf h)) => //.
+exact: free_err.
+Qed.
+
+Lemma free_unbound x P (s : state) r :
+  (forall v, s.1.[? x] = Some v -> v \notin loc) ->
+  (forall s1 s2 : state, (forall v, s1.1.[? x] = Some v -> v \notin loc) ->
+    s1 =[ P ]=> RNormal s2 -> forall v, s2.1.[? x] = Some v -> v \notin loc) ->
+  s =[ Seq P (Free x) ]=> r <-> s =[ Seq P Error ]=> r.
+Proof.
+move=> Hx HP; apply: free_dangling => s' /(HP _ _ Hx) Hn v l /Hn Hv.
+by rewrite insubN.
+Qed.
+
+
+Section Dangling.
+Context {x : varType} {P : com}.
+
+Hypothesis keep_dangling : forall s1 s2 : state, mapsnot x s1.1 s1.2 ->
+  s1 =[ P ]=> RNormal s2 ->
+  forall v l, s2.1.[? x] = Some v -> insub v = Some l -> l \notin domf s2.2.
+
+Lemma use_after_lifetime (s : state) y c r :
+  s.1.[? x] = s.1.[? y] ->
+  (forall (s : state) r, (forall v l, s.1.[? x] = Some v -> insub v = Some l ->
+     l \notin domf s.2) -> s =[ c ]=> r <-> r = RError s) ->
+  s =[ Seq (Free y) (Seq P c) ]=> r <-> s =[ Seq (Free y) (Seq P Error) ]=> r.
+Proof.
+move=> Hxy Hc; rewrite -!seqA; apply: (seq_err_in_place
+  (fun st h => forall v l, st.[? x] = Some v -> insub v = Some l -> l \notin domf h)) => // s'.
+case/cexec_seqE=> [[s1 [/(free_dangles _ _ _ _ Hxy) H1 H2]]|[? [_ //]]].
+exact: keep_dangling H1 H2.
+Qed.
+
+Lemma use_after_free c :
+  (forall (s : state) r, (forall v l, s.1.[? x] = Some v -> insub v = Some l ->
+     l \notin domf s.2) -> s =[ c ]=> r <-> r = RError s) ->
+  cequiv (Seq (Free x) (Seq P c)) (Seq (Free x) (Seq P Error)).
+Proof. by move=> Hc s r; exact: use_after_lifetime. Qed.
+
+Lemma double_free :
+  cequiv (Seq (Free x) (Seq P (Free x))) (Seq (Free x) (Seq P Error)).
+Proof. exact: use_after_free (free_err x). Qed.
+
+Lemma free_unallocated (s : state) r :
+  mapsnot x s.1 s.2 -> s =[ Seq P (Free x) ]=> r <-> s =[ Seq P Error ]=> r.
+Proof. by move=> Hx; apply: free_dangling => s'; exact: keep_dangling Hx. Qed.
+
+End Dangling.
+
+Lemma use_after_lifetime_reach x y P c (s s1 s2 : state) :
+  (forall (s : state) r, (forall v l, s.1.[? x] = Some v -> insub v = Some l ->
+     l \notin domf s.2) -> s =[ c ]=> r <-> r = RError s) ->
+  s =[ Free y ]=> RNormal s1 -> s1 =[ P ]=> RNormal s2 ->
+  (forall v l, s2.1.[? x] = Some v -> insub v = Some l -> l \notin domf s2.2) ->
+  s =[ Seq (Free y) (Seq P c) ]=> RError s2.
+Proof.
+move=> Hc H1 H2 Hx; apply: cexec_seq H1 _; apply: cexec_seq H2 _.
+exact/(Hc _ _ Hx).
+Qed.
+
+Lemma double_free_reach x P (s s1 s2 : state) :
+  s =[ Free x ]=> RNormal s1 -> s1 =[ P ]=> RNormal s2 ->
+  (forall v l, s2.1.[? x] = Some v -> insub v = Some l -> l \notin domf s2.2) ->
+  s =[ Seq (Free x) (Seq P (Free x)) ]=> RError s2.
+Proof. exact: use_after_lifetime_reach (free_err x). Qed.
+
+(** Concrete programs examples, as corollaries. *)
+
+Let seq_det (s s' : state) c1 c2 r :
+  (forall r', s =[ c1 ]=> r' <-> r' = RNormal s') ->
+  s =[ Seq c1 c2 ]=> r <-> s' =[ c2 ]=> r.
+Proof.
+move=> H1; split=> [/cexec_seqE [[s0 [/H1 [<-] //]]|[sf [/H1 //]]]|H2].
+exact: cexec_seq (proj2 (H1 _) erefl) H2.
+Qed.
+
+(* x := malloc(); c runs c from a state where x points to a fresh cell l holding an arbitrary value. *)
+Let seq_alloc (s : state) x c r :
+  s =[ Seq (Alloc x) c ]=> r <->
+  exists (l : loc) any, l \notin domf s.2 /\
+    (s.1.[x <- val l], s.2.[l <- any]) =[ c ]=> r.
+Proof.
+split=> [/cexec_seqE [[s' [/cexec_allocE [l [any [Hl [->]]]] H]]|]|[l [any [Hl H]]]].
+- by exists l, any.
+- by case=> sf [/cexec_allocE [? [? [_ //]]]].
+exact: cexec_seq (cexec_alloc _ _ _ any Hl) H.
+Qed.
+
+(*
+  free(x)         // x points to the allocated cell l
+  free(x)         // ERROR: double free
+*)
+Example free_free (s : state) x (l : loc) v r :
+  s.1.[? x] = Some (val l) -> s.2.[? l] = Some v ->
+  s =[ Seq (Free x) (Free x) ]=> r <-> r = RError (s.1, s.2.[~ l]).
+Proof.
+move=> Hx Hv; have Hl : l \in domf s.2 by rewrite -fndSome Hv.
+have E := double_free (keep_mapsnot (skip_inv (mapsnot x))).
+rewrite !seq_skipl in E.
+rewrite E (seq_det _ (s.1, s.2.[~ l])); first by move=> r'; exact: free_allocated.
+exact: cexec_errorE.
+Qed.
+
+(*
+  free(x)         // x points to the allocated cell l
+  y := v          // unrelated store write: x still dangles
+  free(x)         // ERROR: double free
+*)
+Example free_assign_free (s : state) x y v (l : loc) r :
+  x != y -> s.1.[? x] = Some (val l) -> l \in domf s.2 ->
+  s =[ Seq (Free x) (Seq (AssignStore y (Const v)) (Free x)) ]=> r <->
+  r = RError (s.1.[y <- v], s.2.[~ l]).
+Proof.
+move=> Hxy Hx Hl.
+rewrite (double_free (keep_mapsnot (mapsnot_assign_store _ _ (Const v) Hxy))).
+rewrite (seq_det _ (s.1, s.2.[~ l])); first by move=> r'; exact: free_allocated.
+rewrite (seq_det _ (s.1.[y <- v], s.2.[~ l])); last exact: cexec_errorE.
+by move=> r'; rewrite cexec_assign_storeE.
+Qed.
+
+(*
+  free(x)         // x points to the allocated cell l
+  y := alloc()    // may hand l out again: x is valid again
+  free(x)         // succeeds
+  so the hypothesis on P in [double_free] cannot be dropped; the erroneous
+  run is [free_alloc_free_err].
+*)
+Example free_alloc_free (s : state) x y (l : loc) :
+  s.1.[? x] = Some (val l) -> l \in domf s.2 ->
+  s =[ Seq (Free x) (Seq (Alloc y) (Free x)) ]=> RNormal (s.1.[y <- val l], s.2.[~ l]).
+Proof.
+move=> Hx Hl; apply: cexec_seq ((free_allocated _ _ _ _ Hx Hl).2 erefl) _.
+have Hl' : l \notin domf s.2.[~ l] by rewrite mem_remfF.
+apply: cexec_seq (cexec_alloc (s.1, s.2.[~ l]) y l null Hl') _.
+have Hx' : s.1.[y <- val l].[? x] = Some (val l) by rewrite fnd_set Hx if_same.
+have Hl'' : l \in domf s.2.[~ l].[l <- null] by rewrite mem_setf inE eqxx.
+apply/(free_allocated (s.1.[y <- val l], s.2.[~ l].[l <- null]) x l _ Hx' Hl'').
+by rewrite /= remf1_set eqxx (remf1_id Hl').
+Qed.
+
+(*
+  free(x)         // x points to the allocated cell l
+  y := alloc()    // on the run where alloc hands out a cell l' other than l
+  free(x)         // ERROR: double free, reached on this run
+*)
+Example free_alloc_free_err (s : state) x y (l l' : loc) v :
+  x != y -> s.1.[? x] = Some (val l) -> l \in domf s.2 -> l' \notin domf s.2 ->
+  s =[ Seq (Free x) (Seq (Alloc y) (Free x)) ]=>
+    RError (s.1.[y <- val l'], s.2.[~ l].[l' <- v]).
+Proof.
+move=> Hxy Hx Hl Hl'.
+apply: double_free_reach ((free_allocated _ _ _ _ Hx Hl).2 erefl) _ _.
+  by apply: cexec_alloc; rewrite mem_remf1 negb_and Hl' orbT.
+apply: mapsnot_dangling; exists l.
+rewrite fnd_set (negbTE Hxy) Hx mem_setf inE mem_remfF orbF; split=> //.
+by apply: contraNneq Hl' => <-.
+Qed.
+
+(* Double free: x := malloc(); free(x); free(x) always ends in an error,
+   raised by the second free. *)
+Example double_free_ret_error (s : state) x r :
+  s =[ Seq (Alloc x) (Seq (Free x) (Free x)) ]=> r <->
+  exists l : loc, l \notin domf s.2 /\ r = RError (s.1.[x <- val l], s.2).
+Proof.
+rewrite seq_alloc; split=> [[l [any [Hl]]]|[l [Hl ->]]].
+  rewrite (free_free _ _ l any) /= ?fnd_set ?eqxx // remf1_set eqxx remf1_id //.
+  by move=> ->; exists l.
+exists l, null; rewrite (free_free _ _ l null) /= ?fnd_set ?eqxx //.
+by rewrite remf1_set eqxx remf1_id.
+Qed.
+
+(*
+  free(x)         // x points to the allocated cell l
+  *x := e         // ERROR: use after free (write)
+*)
+Example free_write (s : state) x (l : loc) v e r :
+  s.1.[? x] = Some (val l) -> s.2.[? l] = Some v ->
+  s =[ Seq (Free x) (AssignHeap (Var x) e) ]=> r <->
+  r = RError (s.1, s.2.[~ l]).
+Proof.
+move=> Hx Hv; have Hl : l \in domf s.2 by rewrite -fndSome Hv.
+have E := use_after_free (keep_mapsnot (skip_inv (mapsnot x))) _ (write_dangling x e).
+rewrite !seq_skipl in E.
+rewrite E (seq_det _ (s.1, s.2.[~ l])); first by move=> r'; exact: free_allocated.
+exact: cexec_errorE.
+Qed.
+
+(*
+  free(x)         // x points to the allocated cell l
+  y := *x         // ERROR: use after free (read)
+*)
+Example free_read (s : state) x y (l : loc) r :
+  s.1.[? x] = Some (val l) -> l \in domf s.2 ->
+  s =[ Seq (Free x) (AssignStore y (Deref (Var x))) ]=> r <->
+  r = RError (s.1, s.2.[~ l]).
+Proof.
+move=> Hx Hl.
+have E := use_after_free (keep_mapsnot (skip_inv (mapsnot x))) _ (read_dangling x y).
+rewrite !seq_skipl in E.
+rewrite E (seq_det _ (s.1, s.2.[~ l])); first by move=> r'; exact: free_allocated.
+exact: cexec_errorE.
+Qed.
+
+(* Use after free: x := malloc(); free(x); *x := e always ends in an error,
+   raised by the write. *)
+Example use_after_free_ret_error (s : state) x e r :
+  s =[ Seq (Alloc x) (Seq (Free x) (AssignHeap (Var x) e)) ]=> r <->
+  exists l : loc, l \notin domf s.2 /\ r = RError (s.1.[x <- val l], s.2).
+Proof.
+rewrite seq_alloc; split=> [[l [any [Hl]]]|[l [Hl ->]]].
+  rewrite (free_write _ _ l any) /= ?fnd_set ?eqxx // remf1_set eqxx remf1_id //.
+  by move=> ->; exists l.
+exists l, null; rewrite (free_write _ _ l null) /= ?fnd_set ?eqxx //.
+by rewrite remf1_set eqxx remf1_id.
+Qed.
+
+(*
+  x := alloc(v)   // x points to l, which holds v    (hypotheses Hx, Hv)
+  y := x          // y aliases x: y also points to l
+  free(y)         // deallocate l
+  use(x)          // ERROR: x still points to l, but l has been freed
+                  // (use-after-free; here use(x) is *x := e)
+*)
+Example alias_free_write (s : state) x y (l : loc) v e r :
+  s.1.[? x] = Some (val l) -> s.2.[? l] = Some v ->
+  s =[ Seq (AssignStore y (Var x)) (Seq (Free y) (AssignHeap (Var x) e)) ]=> r <->
+  r = RError (s.1.[y <- val l], s.2.[~ l]).
+Proof.
+move=> Hx Hv; have Hl : l \in domf s.2 by rewrite -fndSome Hv.
+set s' := (s.1.[y <- val l], s.2).
+have Hy : s'.1.[? y] = Some (val l) by rewrite fnd_set eqxx.
+have Hxy : s'.1.[? x] = s'.1.[? y] by rewrite Hy fnd_set Hx if_same.
+rewrite (seq_det _ s'); first by move=> r'; rewrite cexec_assign_storeE /= Hx.
+rewrite -(seq_skipl (AssignHeap (Var x) e)).
+rewrite (use_after_lifetime (keep_mapsnot (skip_inv (mapsnot x))) _ _ _ _ Hxy
+  (write_dangling x e)).
+rewrite seq_skipl (seq_det _ (s'.1, s'.2.[~ l])); last exact: cexec_errorE.
+by move=> r'; exact: free_allocated.
+Qed.
+
+(*
+  // x is unbound: it was never allocated
+  y := alloc()    // allocating another variable never gives x a location
+  free(x)         // ERROR: freeing a non-allocated variable
+*)
+Example alloc_free_unbound (s : state) x y r :
+  x != y -> s.1.[? x] = None ->
+  s =[ Seq (Alloc y) (Free x) ]=> r <->
+  exists (l : loc) any, l \notin domf s.2 /\
+    r = RError (s.1.[y <- val l], s.2.[l <- any]).
+Proof.
+move=> Hxy Hx; rewrite free_unbound; first by move=> v; rewrite Hx.
+  move=> s1 s2 Hn /cexec_allocE [l [any [_ [->]]]] v /=.
+  by rewrite fnd_set (negbTE Hxy); exact: Hn.
+rewrite seq_alloc; split=> [[l [any [Hl /cexec_errorE ->]]]|[l [any [Hl ->]]]].
+  by exists l, any.
+by exists l, any; split=> //; exact: cexec_error.
+Qed.
+
+(*
+  // x dangles: it points to l, which is not allocated
+  free(z)         // frees another cell lz: x still dangles
+  free(x)         // ERROR: freeing a dangling pointer
+*)
+Example free_free_dangling (s : state) x z (l lz : loc) r :
+  s.1.[? x] = Some (val l) -> l \notin domf s.2 ->
+  s.1.[? z] = Some (val lz) -> lz \in domf s.2 ->
+  s =[ Seq (Free z) (Free x) ]=> r <-> r = RError (s.1, s.2.[~ lz]).
+Proof.
+move=> Hx Hl Hz Hlz.
+rewrite (free_unallocated (keep_mapsnot (mapsnot_free x z))); first by exists l.
+rewrite (seq_det _ (s.1, s.2.[~ lz])); first by move=> r'; exact: free_allocated.
+exact: cexec_errorE.
+Qed.
+
+End MemoryViolation.
 
 End Prog.
 
