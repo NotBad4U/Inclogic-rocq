@@ -183,16 +183,28 @@ where "st0 =[ c ]=> st1" := (cexec st0 c st1).
 
 (* Inversion lemmas for [cexec]. *)
 
+(* [inversion_clear] already discharges the constructors that cannot apply, so
+   we never name branches positionally: adding a command to [com] then costs
+   one new lemma instead of silently shifting every [as] pattern below.
+   ([cexec_invE] intros the hypothesis first; the name is [fresh]ened because
+   an ssreflect intro pattern written inside an Ltac body does not bind a name
+   that [inversion_clear] can see.) *)
+Ltac cexec_invE := let H := fresh "H" in move=> H; inversion_clear H; subst.
+
+(* The deterministic commands all have the same shape: a single outcome,
+   computed from the state. *)
+Ltac cexecE_det lem := split; [by cexec_invE | move=> ->; exact: lem].
+
 Lemma cexec_skipE (s : state) r : s =[ Skip ]=> r <-> r = RNormal s.
-Proof. by split=> [H|->]; [inversion H | exact: cexec_skip]. Qed.
+Proof. by cexecE_det (cexec_skip s). Qed.
 
 Lemma cexec_errorE (s : state) r : s =[ Error ]=> r <-> r = RError s.
-Proof. by split=> [H|->]; [inversion H | exact: cexec_error]. Qed.
+Proof. by cexecE_det (cexec_error s). Qed.
 
 Lemma cexec_assign_storeE (s : state) x a r :
   s =[ AssignStore x a ]=> r <->
   r = if eval_expr a s is Some v then RNormal (s.1.[x <- v], s.2) else RError s.
-Proof. by split=> [H|->]; [inversion H | exact: cexec_assign_store]. Qed.
+Proof. by cexecE_det (cexec_assign_store s x a). Qed.
 
 Lemma cexec_assign_heapE (s : state) a e r :
   s =[ AssignHeap a e ]=> r <->
@@ -201,57 +213,12 @@ Lemma cexec_assign_heapE (s : state) a e r :
           olet v  := eval_expr e s in
           if l' \in domf s.2 then Some (s.1, s.2.[l' <- v]) else None)
         is Some s' then RNormal s' else RError s.
-Proof. by split=> [H|->]; [inversion H | exact: cexec_assign_heap]. Qed.
-
-Lemma cexec_nondetE (s : state) x r :
-  s =[ Nondet x ]=> r <-> exists any, r = RNormal (s.1.[x <- any], s.2).
-Proof.
-split=> [H|[any ->]]; last exact: cexec_nondet.
-by inversion H as [| | | |? ? any| | | | | | | | |]; exists any.
-Qed.
+Proof. by cexecE_det (cexec_assign_heap s a e). Qed.
 
 Lemma cexec_assumeE (s : state) b r :
   s =[ Assume b ]=> r <->
   r = if eval_expr b s == Some null then RError s else RNormal s.
-Proof. by split=> [H|->]; [inversion H | exact: cexec_assume]. Qed.
-
-Lemma cexec_seqE (s : state) c1 c2 r :
-  s =[ Seq c1 c2 ]=> r <->
-  (exists s', s =[ c1 ]=> RNormal s' /\ s' =[ c2 ]=> r) \/
-  (exists sf, s =[ c1 ]=> RError sf /\ r = RError sf).
-Proof.
-split=> [H|[[s' [H1 H2]]|[sf [H1 ->]]]]; last 2 first.
-- exact: cexec_seq H1 H2.
-- exact: cexec_seq_error H1.
-inversion H as [| | | | | |? ? ? s' ? H1 H2|? ? ? sf H1| | | | | |]; subst.
-- by left; exists s'.
-- by right; exists sf.
-Qed.
-
-Lemma cexec_choiceE (s : state) c1 c2 r :
-  s =[ Choice c1 c2 ]=> r <-> s =[ c1 ]=> r \/ s =[ c2 ]=> r.
-Proof.
-split=> [H|[H|H]]; last 2 first.
-- exact: cexec_choice_left H.
-- exact: cexec_choice_right H.
-by inversion H as [| | | | | | | |? ? ? ? H'|? ? ? ? H'| | | |]; [left|right].
-Qed.
-
-Lemma cexec_starE (s : state) c r :
-  s =[ Star c ]=> r <-> exists n, s =[ star_n n c ]=> r.
-Proof.
-split=> [H|[n]]; last exact: cexec_star.
-by inversion H as [| | | | | | | | | | |? ? ? n Hn| |]; exists n.
-Qed.
-
-Lemma cexec_allocE (s : state) x r :
-  s =[ Alloc x ]=> r <->
-  exists (l : loc) any, l \notin domf s.2 /\
-    r = RNormal (s.1.[x <- val l], s.2.[l <- any]).
-Proof.
-split=> [H|[l [any [Hl ->]]]]; last exact: cexec_alloc.
-by inversion H as [| | | | | | | | | | | |? ? l any Hl|]; exists l, any.
-Qed.
+Proof. by cexecE_det (cexec_assume s b). Qed.
 
 Lemma cexec_freeE (s : state) x r :
   s =[ Free x ]=> r <->
@@ -259,25 +226,79 @@ Lemma cexec_freeE (s : state) x r :
           olet l := insub v in
           if l \in domf s.2 then Some (s.1, s.2.[~ l]) else None)
         is Some s' then RNormal s' else RError s.
-Proof. by split=> [H|->]; [inversion H | exact: cexec_free]. Qed.
+Proof. by cexecE_det (cexec_free s x). Qed.
 
-Section CmdEquiv.
+Lemma cexec_nondetE (s : state) x r :
+  s =[ Nondet x ]=> r <-> exists any, r = RNormal (s.1.[x <- any], s.2).
+Proof.
+split=> [|[any ->]]; last exact: cexec_nondet.
+by cexec_invE; econstructor.
+Qed.
 
-(* Programs c1 and c2 agree on the outcome r from the same input state s *)
-Definition cmd_equiv (s : state) (c1 c2 : com) (r : result) : Prop :=
-  s =[ c1 ]=> r <-> s =[ c2 ]=> r.
+Lemma cexec_seqE (s : state) c1 c2 r :
+  s =[ Seq c1 c2 ]=> r <->
+  (exists s', s =[ c1 ]=> RNormal s' /\ s' =[ c2 ]=> r) \/
+  (exists sf, s =[ c1 ]=> RError sf /\ r = RError sf).
+Proof.
+split=> [|[[s' [H1 H2]]|[sf [H1 ->]]]]; last 2 first.
+- exact: cexec_seq H1 H2.
+- exact: cexec_seq_error H1.
+cexec_invE.
+- by left; econstructor; split; eassumption.
+- by right; econstructor; split; [eassumption|].
+Qed.
 
-Notation "s =[ c1 ~ c2 ]=> r" := (cmd_equiv s c1 c2 r)
-  (at level 40, c1 at level 99, c2 at level 99, r at level 39).
+Lemma cexec_choiceE (s : state) c1 c2 r :
+  s =[ Choice c1 c2 ]=> r <-> s =[ c1 ]=> r \/ s =[ c2 ]=> r.
+Proof.
+split=> [|[H|H]]; last 2 first.
+- exact: cexec_choice_left H.
+- exact: cexec_choice_right H.
+cexec_invE.
+- by left.
+- by right.
+Qed.
+
+Lemma cexec_starE (s : state) c r :
+  s =[ Star c ]=> r <-> exists n, s =[ star_n n c ]=> r.
+Proof.
+split=> [|[n]]; last exact: cexec_star.
+by cexec_invE; econstructor; eassumption.
+Qed.
+
+Lemma cexec_allocE (s : state) x r :
+  s =[ Alloc x ]=> r <->
+  exists (l : loc) any, l \notin domf s.2 /\
+    r = RNormal (s.1.[x <- val l], s.2.[l <- any]).
+Proof.
+split=> [|[l [any [Hl ->]]]]; last exact: cexec_alloc.
+by cexec_invE; do 2 econstructor; split; last reflexivity; eassumption.
+Qed.
+
+(* [cexec_local] concludes on a state that already carries the binding of [x],
+   so the inversion exposes the underlying state [s0] and the shadowed value. *)
+Lemma cexec_localE (s : state) x c r :
+  s =[ Local x c ]=> r <->
+  exists s0 v r0, s = (s0.1.[x <- v], s0.2) /\ s0 =[ c ]=> r0 /\
+    r = fmap (fun s' => (s'.1.[x <- v], s'.2)) r0.
+Proof.
+split=> [|[s0 [v [r0 [-> [Hc ->]]]]]]; last exact: cexec_local.
+by cexec_invE; exists s0, v, r0.
+Qed.
 
 (* Two commands are equivalent when, from every state, they have the same
    outcomes, normal and erroneous alike. *)
 Definition cequiv (c1 c2 : com) : Prop :=
-  forall (s : state) r, s =[ c1 ~ c2 ]=> r.
+  forall (s : state) r, s =[ c1 ]=> r <-> s =[ c2 ]=> r.
+
+Notation "[ c1 ~ c2 ]" := (cequiv c1 c2)
+  (at level 0, c1 at level 99, c2 at level 99).
+
+Section CmdEquiv.
 
 #[global] Instance cequiv_equiv : Equivalence cequiv.
 Proof.
-split=> [c|c1 c2 E|c1 c2 c3 E1 E2] s r; rewrite /cmd_equiv //.
+split=> [c|c1 c2 E|c1 c2 c3 E1 E2] s r //.
 - exact: iff_sym (E s r).
 - exact: iff_trans (E1 s r) (E2 s r).
 Qed.
@@ -286,25 +307,21 @@ Qed.
 #[global] Instance cexec_proper : Proper (eq ==> cequiv ==> eq ==> iff) cexec.
 Proof. by move=> s _ <- c c' E r _ <-; apply: E. Qed.
 
-#[global] Instance cmd_equiv_proper :
-  Proper (eq ==> cequiv ==> cequiv ==> eq ==> iff) cmd_equiv.
-Proof. by move=> s _ <- c1 c1' E1 c2 c2' E2 r _ <-; rewrite /cmd_equiv E1 E2. Qed.
-
-Lemma seq_skipl c : cequiv (Seq Skip c) c.
+Lemma seq_skipl c : [ Seq Skip c ~ c ].
 Proof.
 move=> s r; split=> [/cexec_seqE [[s' [/cexec_skipE [->] //]]|]|H].
   by case=> sf [/cexec_skipE].
 exact: cexec_seq (cexec_skip s) H.
 Qed.
 
-Lemma seq_skipr c : cequiv (Seq c Skip) c.
+Lemma seq_skipr c : [ Seq c Skip ~ c ].
 Proof.
 move=> s r; split=> [/cexec_seqE [[s' [H /cexec_skipE ->]]|[sf [H ->]]] //|H].
 case: r H => [s'|sf] H; last exact: cexec_seq_error H.
 exact: cexec_seq H (cexec_skip s').
 Qed.
 
-Lemma seqA c1 c2 c3 : cequiv (Seq (Seq c1 c2) c3) (Seq c1 (Seq c2 c3)).
+Lemma seqA c1 c2 c3 : [ Seq (Seq c1 c2) c3 ~ Seq c1 (Seq c2 c3) ].
 Proof.
 move=> s r; split.
 - case/cexec_seqE=> [[s2 [/cexec_seqE [[s1 [H1 H2]]|[? [_ //]]] H3]]|].
@@ -334,11 +351,11 @@ Qed.
 #[global] Instance Choice_proper :
   Proper (cequiv ==> cequiv ==> cequiv) Choice.
 Proof.
-by move=> c1 c1' E1 c2 c2' E2 s r; rewrite /cmd_equiv !cexec_choiceE E1 E2.
+by move=> c1 c1' E1 c2 c2' E2 s r; rewrite !cexec_choiceE E1 E2.
 Qed.
 
 Lemma iter_congr n c c' :
-  cequiv c c' -> cequiv (iter n (Seq c) Skip) (iter n (Seq c') Skip).
+  [ c ~ c' ] -> [ iter n (Seq c) Skip ~ iter n (Seq c') Skip ].
 Proof. by move=> E; elim: n => //= n IH; rewrite IH E. Qed.
 
 #[global] Instance Star_proper : Proper (cequiv ==> cequiv) Star.
@@ -357,7 +374,7 @@ Qed.
 
 (* c^n; c = c; c^n, where c^n := iter n (Seq c) Skip. *)
 Lemma iter_seq_comm c n :
-  cequiv (Seq (iter n (Seq c) Skip) c) (Seq c (iter n (Seq c) Skip)).
+  [ Seq (iter n (Seq c) Skip) c ~ Seq c (iter n (Seq c) Skip) ].
 Proof.
 elim: n => [|n IH] /=; first by rewrite seq_skipl seq_skipr.
 by rewrite seqA IH.
@@ -390,16 +407,12 @@ split=> [|[n /cexec_seqE [[s' [H1 H2]]|[sf [H1 ->]]]]].
 Qed.
 
 (* Star c; c = c; Star c, errors included: both are c^+ = U_{n > 0} c^n. *)
-Lemma star_seq_comm c (s : state) r :
-  s =[ Seq (Star c) c ~ Seq c (Star c) ]=> r.
+Lemma star_seq_comm c : [ Seq (Star c) c ~ Seq c (Star c) ].
 Proof.
-split.
+move=> s r; split.
 - by case/seq_starl=> n /iter_seq_comm H; apply/seq_starr; exists n.
 - by case/seq_starr=> n /iter_seq_comm H; apply/seq_starl; exists n.
 Qed.
-
-Lemma cequiv_star_seq_comm c : cequiv (Seq (Star c) c) (Seq c (Star c)).
-Proof. exact: star_seq_comm. Qed.
 
 End CmdEquiv.
 
@@ -592,11 +605,11 @@ Qed.
 Lemma use_after_free c :
   (forall (s : state) r, (forall v l, s.1.[? x] = Some v -> insub v = Some l ->
      l \notin domf s.2) -> s =[ c ]=> r <-> r = RError s) ->
-  cequiv (Seq (Free x) (Seq P c)) (Seq (Free x) (Seq P Error)).
+  [ Seq (Free x) (Seq P c) ~ Seq (Free x) (Seq P Error) ].
 Proof. by move=> Hc s r; exact: use_after_lifetime. Qed.
 
 Lemma double_free :
-  cequiv (Seq (Free x) (Seq P (Free x))) (Seq (Free x) (Seq P Error)).
+  [ Seq (Free x) (Seq P (Free x)) ~ Seq (Free x) (Seq P Error) ].
 Proof. exact: use_after_free (free_err x). Qed.
 
 Lemma free_unallocated (s : state) r :
