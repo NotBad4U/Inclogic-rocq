@@ -8,6 +8,10 @@ Local Open Scope fmap_scope.
 Notation "'olet' x ':=' e 'in' b" := (obind (fun x => b) e)
   (at level 200, x name, e at level 100, b at level 200, right associativity).
 
+(* [m'] holds at least the bindings of [m], and maybe more. *)
+Definition fsubmap {K : choiceType} {V : Type} (m m' : {fmap K -> V}) : Prop :=
+  forall k v, m.[? k] = Some v -> m'.[? k] = Some v.
+
 Section State.
 Context (varType valType : choiceType).
 Context (loc : {fset valType}).
@@ -16,6 +20,10 @@ Definition store := {fmap varType -> valType}.
 Definition heap := {fmap loc -> valType}.
 
 Definition sprop := store -> heap -> Prop.
+
+Definition ffalse : sprop := fun _ _ => False.
+Definition ftrue : sprop := fun _ _ => True.
+
 
 Definition encapsulate (p : Prop) : sprop :=
   fun (s : store) (h : heap) => p /\ domf h = fset0.
@@ -31,6 +39,9 @@ Definition mapsnot (e : varType) : sprop :=
 
 Definition state := (store * heap)%type.
 
+Definition substate (sh sh' : state) : Prop :=
+  fsubmap sh.1 sh'.1 /\ fsubmap sh.2 sh'.2.
+
 Definition sprod (sh1 sh2 : state) : option state :=
   if (sh1.1 == sh2.1) && [disjoint domf sh1.2 & domf sh2.2]
   then Some (sh1.1, sh1.2 + sh2.2)
@@ -41,18 +52,81 @@ Definition hprod (p q : sprop) : sprop :=
 
 End State.
 
+(* Concrete syntax for states and assertions, opened with [state_scope]. The
+   notations live outside [Section State] so that they see the constants with
+   their discharged parameters, filled in by the [_]s.
+
+   A state is written [⟨ s | h ⟩], each side being a finite map in the custom
+   entry [fm]: [∅] is the empty map, [k ↦ v ; m] is [m.[k <- v]] (so the
+   leftmost binding wins), [k ↦ v] is a singleton, and a variable or [{ t }]
+   embeds any map. Thus [⟨ x ↦ v ; y ↦ w | l ↦ v ⟩] is the state whose store
+   binds exactly [x] and [y] and whose heap holds exactly [l]. To enumerate
+   only some bindings and ignore the rest, use [⊑]: [⟨ x ↦ v | l ↦ w ⟩ ⊑ σ]
+   says that [σ] binds [x] to [v] and [l] to [w], whatever else it holds.
+
+   Assertions are written in [⟪ P ⟫] (custom entry [ss]). The bindings
+   above and the points-to [x ↦ y] share the arrow but not the entry: a map
+   binding is a single store or heap cell, whereas [x ↦ y] is the separation
+   logic assertion "the heap is exactly the cell at [x], holding the value
+   of [y]". *)
+Declare Scope state_scope.
+Delimit Scope state_scope with state.
+
+Declare Custom Entry fm.
+Notation "m" := m (in custom fm at level 0, m global).
+Notation "{ m }" := m (in custom fm at level 0, m constr).
+Notation "∅" := fmap0 (in custom fm at level 0).
+#[warnings="-level-0-notation-not-closed"]
+Notation "k ↦ v ; m" := (setf m k v)
+  (in custom fm at level 0, k global, v constr at level 99,
+   m custom fm at level 0, format "k  ↦  v ;  m").
+#[warnings="-level-0-notation-not-closed"]
+Notation "k ↦ v" := (setf fmap0 k v)
+  (in custom fm at level 0, k global, v constr at level 99).
+
+Notation "⟨ s | h ⟩" := (@pair (store _ _) (heap _ _) s h)
+  (s custom fm at level 0, h custom fm at level 0) : state_scope.
+Notation "σ1 ∙ σ2" := (sprod _ _ _ σ1 σ2) (at level 40, no associativity)
+  : state_scope.
+Notation "σ ⊑ σ'" := (substate _ _ _ σ σ') (at level 70, no associativity)
+  : state_scope.
+
+Declare Custom Entry ss.
+Notation "⟪ P ⟫" := P (P custom ss at level 99) : state_scope.
+Notation "( P )" := P (in custom ss at level 0, P custom ss at level 99).
+Notation "{ P }" := P (in custom ss at level 0, P constr).
+Notation "⊥" := (ffalse _ _ _) (in custom ss at level 0).
+Notation "⊤" := (ftrue _ _ _) (in custom ss at level 0).
+Notation "'emp'" := (emp _ _ _) (in custom ss at level 0).
+Notation "⌜ P ⌝" := (encapsulate _ _ _ P) (in custom ss at level 0, P constr).
+#[warnings="-level-0-notation-not-closed"]
+Notation "x ↦ y" := (mapsto _ _ _ x y) (in custom ss at level 0, x ident, y ident).
+#[warnings="-level-0-notation-not-closed,-postfix-notation-not-level-1"]
+Notation "x ↦̸" := (mapsnot _ _ _ x) (in custom ss at level 0, x ident).
+Notation "P ★ Q" := (hprod _ _ _ P Q)
+  (in custom ss at level 40, right associativity).
+
+Section StateNotationTest.
+Local Open Scope state_scope.
+Context (varType valType : choiceType) (loc : {fset valType}).
+Context (x y : varType) (v w : valType) (l l' : loc).
+Context (s : store varType valType) (h : heap valType loc).
+Context (σ σ' : state varType valType loc) (P : sprop varType valType loc).
+Check ⟨ x ↦ v ; y ↦ w | l ↦ v ⟩.
+Check ⟨ s | l ↦ v ; l' ↦ w ; h ⟩.
+Check ⟨ x ↦ v | ∅ ⟩ ⊑ σ /\ ⟨ ∅ | l ↦ w ⟩ ⊑ σ.
+Check σ ∙ σ' = Some ⟨ s | h ⟩.
+Check (⟪ x ↦ y ★ y ↦̸ ★ ⊤ ⟫ : sprop varType valType loc).
+Check (⟪ emp ★ ⌜ v = w ⌝ ★ ({P} ★ ⊥) ⟫ : sprop varType valType loc).
+End StateNotationTest.
+
 (* The language is parametric in the binary operators [op] and their
    (partial) denotation. The concrete arithmetic is chosen only when the
-   language is instantiated; see the [*Ops] sections below. *)
-Section Prog.
-Context (varType : choiceType) (valType : monoidType) (loc : {fset valType}).
-Context (op : Type) (denote : op -> valType -> valType -> option valType).
-
-Abbreviation store := (store varType valType).
-Abbreviation heap := (heap valType loc).
-Abbreviation sprop := (sprop varType valType loc).
-Abbreviation state := (state varType valType loc).
-Abbreviation mapsnot := (mapsnot varType valType loc).
+   language is instantiated; see the [*Ops] sections below. The syntax is
+   declared in its own section, with implicit parameters, so that its
+   notations are global and usable from any file importing this one. *)
+Section Syntax.
+Context (varType : choiceType) (valType : monoidType) (op : Type).
 
 Inductive expr :=
     Deref : expr -> expr
@@ -73,6 +147,25 @@ Inductive com :=
   | Star : com -> com
   | Alloc : varType -> com
   | Free : varType -> com.
+
+End Syntax.
+
+Arguments Deref {varType valType op}.
+Arguments Binop {varType valType op}.
+Arguments Var {varType valType op}.
+Arguments Const {varType valType op}.
+Arguments Skip {varType valType op}.
+Arguments AssignStore {varType valType op}.
+Arguments AssignHeap {varType valType op}.
+Arguments Nondet {varType valType op}.
+Arguments Assume {varType valType op}.
+Arguments Error {varType valType op}.
+Arguments Seq {varType valType op}.
+Arguments Local {varType valType op}.
+Arguments Choice {varType valType op}.
+Arguments Star {varType valType op}.
+Arguments Alloc {varType valType op}.
+Arguments Free {varType valType op}.
 
 (* Concrete syntax, written inside [<{ ... }>]. Commands and expressions live
    in two separate custom entries, so the dereference [[e]] and the heap write
@@ -115,14 +208,28 @@ Notation "c1 ;; c2" := (Seq c1 c2)
 Notation "c1 ⊕ c2" := (Choice c1 c2)
   (in custom hcom at level 85, right associativity).
 
-Local Open Scope imp_scope.
-
 Section NotationTest.
-Context (e : expr) (x y : varType) (P : com).
+Local Open Scope imp_scope.
+Context (varType : choiceType) (valType : monoidType) (op : Type).
+Context (e : expr varType valType op) (x y : varType) (P : com varType valType op).
 Check <{ `y := [x] ;; [x] := y ;; (alloc y ;; nondet x)★ ;;
          free x ⊕ {P} ;; assume {e} ;; skip ;; error }>.
 Check <{ `x := [[x]] ;; [[x]] := {e} }>.
 End NotationTest.
+
+Section Prog.
+Context (varType : choiceType) (valType : monoidType) (loc : {fset valType}).
+Context (op : Type) (denote : op -> valType -> valType -> option valType).
+
+Abbreviation store := (store varType valType).
+Abbreviation heap := (heap valType loc).
+Abbreviation sprop := (sprop varType valType loc).
+Abbreviation state := (state varType valType loc).
+Abbreviation mapsnot := (mapsnot varType valType loc).
+
+Abbreviation expr := (expr varType valType op).
+Abbreviation com := (com varType valType op).
+
 
 
 (*
