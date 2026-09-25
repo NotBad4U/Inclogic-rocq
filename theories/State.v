@@ -74,6 +74,56 @@ Inductive com :=
   | Alloc : varType -> com
   | Free : varType -> com.
 
+(* Concrete syntax, written inside [<{ ... }>]. Commands and expressions live
+   in two separate custom entries, so the dereference [[e]] and the heap write
+   [[a] := e] never compete with each other nor with term-level notations.
+   Levels follow [Imp.v]: [;;] binds tighter than [⊕]. In an expression a
+   bare identifier is a program variable; a store assignment marks its
+   target with a backtick, [`x := e], so that no command starts with an
+   identifier (which would clash with the keywords [skip] and [error]).
+   [{ t }] embeds an arbitrary Rocq term, an [expr] or a [com]. *)
+Declare Custom Entry hexpr.
+Declare Custom Entry hcom.
+Declare Scope imp_scope.
+Delimit Scope imp_scope with imp.
+
+Notation "<{ c }>" := c (c custom hcom at level 99) : imp_scope.
+
+Notation "( e )" := e (in custom hexpr at level 0, e custom hexpr at level 99).
+Notation "{ e }" := e (in custom hexpr at level 0, e constr).
+Notation "x" := (Var x) (in custom hexpr at level 0, x ident).
+Notation "[ e ]" := (Deref e) (in custom hexpr at level 0, e custom hexpr at level 99).
+
+Notation "( c )" := c (in custom hcom at level 0, c custom hcom at level 99).
+Notation "{ c }" := c (in custom hcom at level 0, c constr).
+Notation "'skip'" := Skip (in custom hcom at level 0).
+Notation "'error'" := Error (in custom hcom at level 0).
+Notation "'free' x" := (Free x) (in custom hcom at level 70, x ident).
+Notation "'alloc' x" := (Alloc x) (in custom hcom at level 70, x ident).
+Notation "'nondet' x" := (Nondet x) (in custom hcom at level 70, x ident).
+Notation "'assume' e" := (Assume e)
+  (in custom hcom at level 70, e custom hexpr at level 99).
+Notation "'`' x := e" := (AssignStore x e)
+  (in custom hcom at level 70, x ident, e custom hexpr at level 99,
+   format "'`' x  :=  e").
+Notation "[ a ] := e" := (AssignHeap a e)
+  (in custom hcom at level 70, a custom hexpr at level 99,
+   e custom hexpr at level 99, format "[ a ]  :=  e").
+Notation "c ★" := (Star c) (in custom hcom at level 1, left associativity).
+Notation "c1 ;; c2" := (Seq c1 c2)
+  (in custom hcom at level 80, right associativity, format "c1  ;;  c2").
+Notation "c1 ⊕ c2" := (Choice c1 c2)
+  (in custom hcom at level 85, right associativity).
+
+Local Open Scope imp_scope.
+
+Section NotationTest.
+Context (e : expr) (x y : varType) (P : com).
+Check <{ `y := [x] ;; [x] := y ;; (alloc y ;; nondet x)★ ;;
+         free x ⊕ {P} ;; assume {e} ;; skip ;; error }>.
+Check <{ `x := [[x]] ;; [[x]] := {e} }>.
+End NotationTest.
+
 
 (*
   O'Hearn's _Derived Unrolling Rule_: iteration can execute its
@@ -495,6 +545,58 @@ case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
 by rewrite (not_fnd (Hd _ _ Ex El)).
 Qed.
 
+(** Memory accesses through a variable. *)
+
+(* x is dangling: whatever x holds, it is not an allocated location. *)
+Definition dangling x : sprop :=
+  fun st h => forall v l, st.[? x] = Some v -> insub v = Some l -> l \notin domf h.
+
+(* [derefs x e]: evaluating e dereferences x. *)
+Fixpoint derefs x (e : expr) : bool :=
+  match e with
+  | Deref e' => (if e' is Var y then y == x else false) || derefs x e'
+  | Binop _ e1 e2 => derefs x e1 || derefs x e2
+  | Var _ | Const _ => false
+  end.
+
+Lemma derefs_dangling x e (s : state) :
+  dangling x s.1 s.2 -> derefs x e -> eval_expr e s = None.
+Proof.
+move=> Hd; elim: e => [e IH|o e1 IH1 e2 IH2|//|//] /=.
+  case/orP=> [|/IH -> //]; case: e {IH} => // y /eqP -> /=.
+  case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
+  exact: not_fnd (Hd _ _ Ex El).
+by case/orP=> [/IH1 -> //|/IH2 ->]; case: eval_expr.
+Qed.
+
+(* [uses x c]: c reads or writes the heap through x before doing anything
+   else. [Assume] is left out because it does not fail on an undefined
+   expression, and [Local] because it has no run when its variable is unbound. *)
+Inductive uses x : com -> Prop :=
+| uses_free : uses x (Free x)
+| uses_read y e : derefs x e -> uses x (AssignStore y e)
+| uses_write e : uses x (AssignHeap (Var x) e)
+| uses_write_addr a e : derefs x a -> uses x (AssignHeap a e)
+| uses_write_val a e : derefs x e -> uses x (AssignHeap a e)
+| uses_seq c1 c2 : uses x c1 -> uses x (Seq c1 c2)
+| uses_choice c1 c2 : uses x c1 -> uses x c2 -> uses x (Choice c1 c2).
+
+(* Using a dangling x errs in place. *)
+Lemma uses_err x c (s : state) :
+  dangling x s.1 s.2 -> uses x c -> forall r, s =[ c ]=> r <-> r = RError s.
+Proof.
+move=> Hd; elim=> {c} [|y e He|e|a e Ha|a e He|c1 c2 _ IH|c1 c2 _ IH1 _ IH2] r.
+- exact: free_err.
+- by rewrite cexec_assign_storeE (derefs_dangling _ _ _ Hd He).
+- exact: write_dangling.
+- by rewrite cexec_assign_heapE (derefs_dangling _ _ _ Hd Ha).
+- rewrite cexec_assign_heapE (derefs_dangling _ _ _ Hd He).
+  by case: eval_expr => //= va; case: insub.
+- rewrite cexec_seqE; split=> [[[s' [/IH //]]|[sf [/IH [->] ->]]] //|->].
+  by right; exists s; split=> //; exact/IH.
+- by rewrite cexec_choiceE IH1 IH2; split=> [[]|->]; auto.
+Qed.
+
 Lemma free_dangles (s s' : state) x y :
   s.1.[? x] = s.1.[? y] -> s =[ Free y ]=> RNormal s' -> mapsnot x s'.1 s'.2.
 Proof.
@@ -551,6 +653,14 @@ rewrite cexec_seqE; split=> [[[s' [H /cexec_errorE ->]]|[sf [H ->]]]|[s' [-> [H|
 - by right; exists s'.
 Qed.
 
+Lemma seq_errorP (s : state) P r :
+  s =[ Seq P Error ]=> r <->
+  exists s', r = RError s' /\ s =[ Seq P Error ]=> RError s'.
+Proof.
+split=> [H|[s' [-> //]]].
+by have /seq_errorE [s' [E _]] := H; exists s'; rewrite -E.
+Qed.
+
 Lemma seq_err_in_place (p : sprop) P c (s : state) r :
   (forall s', s =[ P ]=> RNormal s' -> p s'.1 s'.2) ->
   (forall (s' : state) r', p s'.1 s'.2 -> s' =[ c ]=> r' <-> r' = RError s') ->
@@ -562,15 +672,23 @@ split=> -[[s' [H1 H2]]|H]; [left | by right | left | by right]; exists s'.
 by split=> //; apply/(Hc _ _ (HP _ H1)); move/cexec_errorE: H2.
 Qed.
 
+(* Once P leaves x dangling, any use of x errs. *)
+Lemma use_dangling x P c (s : state) r :
+  (forall s' : state, s =[ P ]=> RNormal s' -> dangling x s'.1 s'.2) ->
+  uses x c ->
+  s =[ Seq P c ]=> r <->
+  exists s', r = RError s' /\ s =[ Seq P Error ]=> RError s'.
+Proof.
+move=> HP Hc; rewrite -seq_errorP; apply: (seq_err_in_place (dangling x)) => //.
+by move=> s' r' Hd; exact: uses_err Hd Hc r'.
+Qed.
+
 Lemma free_dangling x P (s : state) r :
   (forall s' : state, s =[ P ]=> RNormal s' ->
     forall v l, s'.1.[? x] = Some v -> insub v = Some l -> l \notin domf s'.2) ->
-  s =[ Seq P (Free x) ]=> r <-> s =[ Seq P Error ]=> r.
-Proof.
-move=> HP; apply: (seq_err_in_place
-  (fun st h => forall v l, st.[? x] = Some v -> insub v = Some l -> l \notin domf h)) => //.
-exact: free_err.
-Qed.
+  s =[ Seq P (Free x) ]=> r <->
+  exists s', r = RError s' /\ s =[ Seq P Error ]=> RError s'.
+Proof. by move=> HP; exact: use_dangling HP (uses_free x). Qed.
 
 Lemma free_unbound x P (s : state) r :
   (forall v, s.1.[? x] = Some v -> v \notin loc) ->
@@ -578,7 +696,7 @@ Lemma free_unbound x P (s : state) r :
     s1 =[ P ]=> RNormal s2 -> forall v, s2.1.[? x] = Some v -> v \notin loc) ->
   s =[ Seq P (Free x) ]=> r <-> s =[ Seq P Error ]=> r.
 Proof.
-move=> Hx HP; apply: free_dangling => s' /(HP _ _ Hx) Hn v l /Hn Hv.
+move=> Hx HP; rewrite seq_errorP; apply: free_dangling => s' /(HP _ _ Hx) Hn v l /Hn Hv.
 by rewrite insubN.
 Qed.
 
@@ -614,7 +732,7 @@ Proof. exact: use_after_free (free_err x). Qed.
 
 Lemma free_unallocated (s : state) r :
   mapsnot x s.1 s.2 -> s =[ Seq P (Free x) ]=> r <-> s =[ Seq P Error ]=> r.
-Proof. by move=> Hx; apply: free_dangling => s'; exact: keep_dangling Hx. Qed.
+Proof. by move=> Hx; rewrite seq_errorP; apply: free_dangling => s'; exact: keep_dangling Hx. Qed.
 
 End Dangling.
 
