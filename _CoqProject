@@ -12,4 +12,5 @@ theories/KatIncImp.v
 theories/IncElpi.v
 theories/ExampleIncElpi.v
 theories/State.v
+theories/SepInc.v
 theories/Assumptions.v

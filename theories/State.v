@@ -50,6 +50,22 @@ Definition sprod (sh1 sh2 : state) : option state :=
 Definition hprod (p q : sprop) : sprop :=
   fun s h => exists sh1 sh2, sprod sh1 sh2 = Some (s, h) /\ (p s h) /\ (q s h).
 
+(* [pure b] is [encapsulate] for a condition on the state rather than a fixed
+   [Prop] ([x = x'], [B], ...): it holds on the empty heap only. *)
+Definition pure (b : state -> Prop) : sprop :=
+  fun s h => encapsulate (b (s, h)) s h.
+
+(* [x ↦ -]: the heap is one allocated cell, at [x], holding any value. *)
+Definition pts_any (x : varType) : sprop :=
+  fun s h => exists l v, s.[? x] = Some (val l) /\ domf h = [fset l] /\ h.[? l] = Some v.
+
+(* [∃x. p], on a program variable [x]; [p ∨ q], [p ∧ q]; entailment. *)
+Definition aexist (x : varType) (p : sprop) : sprop :=
+  fun s h => exists v, p s.[x <- v] h.
+Definition aor (p q : sprop) : sprop := fun s h => p s h \/ q s h.
+Definition aand (p q : sprop) : sprop := fun s h => p s h /\ q s h.
+Definition aimp (p q : sprop) : Prop := forall s h, p s h -> q s h.
+
 End State.
 
 (* Concrete syntax for states and assertions, opened with [state_scope]. The
@@ -64,7 +80,7 @@ End State.
    only some bindings and ignore the rest, use [⊑]: [⟨ x ↦ v | l ↦ w ⟩ ⊑ σ]
    says that [σ] binds [x] to [v] and [l] to [w], whatever else it holds.
 
-   Assertions are written in [⟪ P ⟫] (custom entry [ss]). The bindings
+   Assertions are written in [⟦ P ⟧] (custom entry [ss]). The bindings
    above and the points-to [x ↦ y] share the arrow but not the entry: a map
    binding is a single store or heap cell, whereas [x ↦ y] is the separation
    logic assertion "the heap is exactly the cell at [x], holding the value
@@ -92,7 +108,7 @@ Notation "σ ⊑ σ'" := (substate _ _ _ σ σ') (at level 70, no associativity)
   : state_scope.
 
 Declare Custom Entry ss.
-Notation "⟪ P ⟫" := P (P custom ss at level 99) : state_scope.
+Notation "⟦ P ⟧" := P (P custom ss at level 99) : state_scope.
 Notation "( P )" := P (in custom ss at level 0, P custom ss at level 99).
 Notation "{ P }" := P (in custom ss at level 0, P constr).
 Notation "⊥" := (ffalse _ _ _) (in custom ss at level 0).
@@ -116,8 +132,8 @@ Check ⟨ x ↦ v ; y ↦ w | l ↦ v ⟩.
 Check ⟨ s | l ↦ v ; l' ↦ w ; h ⟩.
 Check ⟨ x ↦ v | ∅ ⟩ ⊑ σ /\ ⟨ ∅ | l ↦ w ⟩ ⊑ σ.
 Check σ ∙ σ' = Some ⟨ s | h ⟩.
-Check (⟪ x ↦ y ★ y ↦̸ ★ ⊤ ⟫ : sprop varType valType loc).
-Check (⟪ emp ★ ⌜ v = w ⌝ ★ ({P} ★ ⊥) ⟫ : sprop varType valType loc).
+Check (⟦ x ↦ y ★ y ↦̸ ★ ⊤ ⟧ : sprop varType valType loc).
+Check (⟦ emp ★ ⌜ v = w ⌝ ★ ({P} ★ ⊥) ⟧ : sprop varType valType loc).
 End StateNotationTest.
 
 (* The language is parametric in the binary operators [op] and their
@@ -134,6 +150,16 @@ Inductive expr :=
   | Var : varType -> expr
   | Const : valType -> expr.
 
+(* [esubst x e a] replaces every occurrence of the variable [x] in [a] by [e]. *)
+Fixpoint esubst (x : varType) (e : expr) (a : expr) : expr :=
+  match a with
+  | Deref a'      => Deref (esubst x e a')
+  | Binop o a1 a2 => Binop o (esubst x e a1) (esubst x e a2)
+  | Var y         => if x == y then e else Var y
+  | Const v       => Const v
+  end.
+
+
 Inductive com :=
     Skip : com
   | AssignStore : varType -> expr -> com
@@ -147,6 +173,8 @@ Inductive com :=
   | Star : com -> com
   | Alloc : varType -> com
   | Free : varType -> com.
+
+
 
 End Syntax.
 
@@ -166,6 +194,7 @@ Arguments Choice {varType valType op}.
 Arguments Star {varType valType op}.
 Arguments Alloc {varType valType op}.
 Arguments Free {varType valType op}.
+Arguments esubst {varType valType op}.
 
 (* Concrete syntax, written inside [<{ ... }>]. Commands and expressions live
    in two separate custom entries, so the dereference [[e]] and the heap write
@@ -277,6 +306,22 @@ Proof. by case: r. Qed.
 
 Lemma bindA r f g : bind (bind r f) g = bind r (fun s => bind (f s) g).
 Proof. by case: r. Qed.
+
+(* Assertions on results, for the triples. [pexist], [por], [pimp] lift
+   [aexist], [aor], [aimp]; [pexist] goes through [fmap], so, like [Local] in
+   [cexec], it only rebinds [x] in normal results. [pstar Q R] is [hprod] on
+   the final state, keeping the exit condition. *)
+Definition postassertion := result -> Prop.
+
+Definition pexist (x : varType) (Q : postassertion) : postassertion :=
+  fun r => exists v, Q (fmap (fun σ => (σ.1.[x <- v], σ.2)) r).
+Definition por (Q1 Q2 : postassertion) : postassertion := fun r => Q1 r \/ Q2 r.
+Definition pimp (Q Q' : postassertion) : Prop := forall r, Q r -> Q' r.
+Definition pstar (Q : postassertion) (R : sprop) : postassertion :=
+  fun r => match r with
+  | RNormal σ => hprod varType valType loc (fun s h => Q (RNormal (s, h))) R σ.1 σ.2
+  | RError σ  => hprod varType valType loc (fun s h => Q (RError (s, h))) R σ.1 σ.2
+  end.
 
 Reserved Notation "st0 =[ c ]=> st1"
   (at level 40, c at level 99, st1 at level 39).
