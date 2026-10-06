@@ -62,29 +62,20 @@ Definition pts_any (x : varType) : sprop :=
 (* [∃x. p], on a program variable [x]; [p ∨ q], [p ∧ q]; entailment. *)
 Definition aexist (x : varType) (p : sprop) : sprop :=
   fun s h => exists v, p s.[x <- v] h.
+
+(* [p[y/x]] reads as substitute [x] by [y] in the assertion [p]  *)
+Definition asubst (x y : varType) (p : sprop) : sprop :=
+  fun s h => p (if s.[? y] is Some v then s.[x <- v] else s.[~ x]) h.
+
 Definition aor (p q : sprop) : sprop := fun s h => p s h \/ q s h.
+
 Definition aand (p q : sprop) : sprop := fun s h => p s h /\ q s h.
+
 Definition aimp (p q : sprop) : Prop := forall s h, p s h -> q s h.
 
 End State.
 
-(* Concrete syntax for states and assertions, opened with [state_scope]. The
-   notations live outside [Section State] so that they see the constants with
-   their discharged parameters, filled in by the [_]s.
 
-   A state is written [⟨ s | h ⟩], each side being a finite map in the custom
-   entry [fm]: [∅] is the empty map, [k ↦ v ; m] is [m.[k <- v]] (so the
-   leftmost binding wins), [k ↦ v] is a singleton, and a variable or [{ t }]
-   embeds any map. Thus [⟨ x ↦ v ; y ↦ w | l ↦ v ⟩] is the state whose store
-   binds exactly [x] and [y] and whose heap holds exactly [l]. To enumerate
-   only some bindings and ignore the rest, use [⊑]: [⟨ x ↦ v | l ↦ w ⟩ ⊑ σ]
-   says that [σ] binds [x] to [v] and [l] to [w], whatever else it holds.
-
-   Assertions are written in [⟦ P ⟧] (custom entry [ss]). The bindings
-   above and the points-to [x ↦ y] share the arrow but not the entry: a map
-   binding is a single store or heap cell, whereas [x ↦ y] is the separation
-   logic assertion "the heap is exactly the cell at [x], holding the value
-   of [y]". *)
 Declare Scope state_scope.
 Delimit Scope state_scope with state.
 
@@ -108,9 +99,12 @@ Notation "σ ⊑ σ'" := (substate _ _ _ σ σ') (at level 70, no associativity)
   : state_scope.
 
 Declare Custom Entry ss.
-Notation "⟦ P ⟧" := P (P custom ss at level 99) : state_scope.
+Notation "<| P |>" := P (P custom ss at level 99) : state_scope.
 Notation "( P )" := P (in custom ss at level 0, P custom ss at level 99).
 Notation "{ P }" := P (in custom ss at level 0, P constr).
+(* A bare identifier is a Rocq variable; [ident] (not [global]) so that it
+   shares its prefix with [x ↦ y], [x ≡ e], ... *)
+Notation "P" := P (in custom ss at level 0, P ident).
 Notation "⊥" := (ffalse _ _ _) (in custom ss at level 0).
 Notation "⊤" := (ftrue _ _ _) (in custom ss at level 0).
 Notation "'emp'" := (emp _ _ _) (in custom ss at level 0).
@@ -118,29 +112,27 @@ Notation "⌜ P ⌝" := (encapsulate _ _ _ P) (in custom ss at level 0, P constr
 #[warnings="-level-0-notation-not-closed"]
 Notation "x ↦ y" := (mapsto _ _ _ x y) (in custom ss at level 0, x ident, y ident).
 #[warnings="-level-0-notation-not-closed,-postfix-notation-not-level-1"]
+Notation "x ↦ -" := (pts_any _ _ _ x) (in custom ss at level 0, x ident).
+#[warnings="-level-0-notation-not-closed,-postfix-notation-not-level-1"]
 Notation "x ↦̸" := (mapsnot _ _ _ x) (in custom ss at level 0, x ident).
 Notation "P ★ Q" := (hprod _ _ _ P Q)
   (in custom ss at level 40, right associativity).
+(* The paper's [p[y/x]] *)
+Notation "P [ y / x ]" := (asubst _ _ _ x y P)
+  (in custom ss at level 1, left associativity, y ident, x ident,
+   format "P [ y / x ]").
+(* The paper's [∃x. p] *)
+Notation "∃ x , P" := (aexist _ _ _ x P)
+  (in custom ss at level 99, x ident, P custom ss at level 99,
+   format "∃  x ,  P").
+Notation "P //\\ Q" := (aand _ _ _ P Q)
+  (in custom ss at level 80, right associativity).
+Notation "P \\// Q" := (aor _ _ _ P Q)
+  (in custom ss at level 85, right associativity).
+Notation "P --> Q" := (aimp _ _ _ P Q) (at level 55, right associativity)
+  : state_scope.
 
-Section StateNotationTest.
-Local Open Scope state_scope.
-Context (varType valType : choiceType) (loc : {fset valType}).
-Context (x y : varType) (v w : valType) (l l' : loc).
-Context (s : store varType valType) (h : heap valType loc).
-Context (σ σ' : state varType valType loc) (P : sprop varType valType loc).
-Check ⟨ x ↦ v ; y ↦ w | l ↦ v ⟩.
-Check ⟨ s | l ↦ v ; l' ↦ w ; h ⟩.
-Check ⟨ x ↦ v | ∅ ⟩ ⊑ σ /\ ⟨ ∅ | l ↦ w ⟩ ⊑ σ.
-Check σ ∙ σ' = Some ⟨ s | h ⟩.
-Check (⟦ x ↦ y ★ y ↦̸ ★ ⊤ ⟧ : sprop varType valType loc).
-Check (⟦ emp ★ ⌜ v = w ⌝ ★ ({P} ★ ⊥) ⟧ : sprop varType valType loc).
-End StateNotationTest.
 
-(* The language is parametric in the binary operators [op] and their
-   (partial) denotation. The concrete arithmetic is chosen only when the
-   language is instantiated; see the [*Ops] sections below. The syntax is
-   declared in its own section, with implicit parameters, so that its
-   notations are global and usable from any file importing this one. *)
 Section Syntax.
 Context (varType : choiceType) (valType : monoidType) (op : Type).
 
@@ -159,7 +151,6 @@ Fixpoint esubst (x : varType) (e : expr) (a : expr) : expr :=
   | Const v       => Const v
   end.
 
-
 Inductive com :=
     Skip : com
   | AssignStore : varType -> expr -> com
@@ -174,7 +165,24 @@ Inductive com :=
   | Alloc : varType -> com
   | Free : varType -> com.
 
-
+(* [csubst x y c] is the paper's [C[y/x]] *)
+Fixpoint csubst (x y : varType) (c : com) : com :=
+  let rn z := if z == x then y else z in
+  let se := esubst x (Var y) in
+  match c with
+  | Skip            => Skip
+  | Error           => Error
+  | AssignStore z e => AssignStore (rn z) (se e)
+  | AssignHeap a e  => AssignHeap (se a) (se e)
+  | Nondet z        => Nondet (rn z)
+  | Alloc z         => Alloc (rn z)
+  | Free z          => Free (rn z)
+  | Assume e        => Assume (se e)
+  | Seq c1 c2       => Seq (csubst x y c1) (csubst x y c2)
+  | Choice c1 c2    => Choice (csubst x y c1) (csubst x y c2)
+  | Star c'         => Star (csubst x y c')
+  | Local z c'      => if z == x then Local z c' else Local z (csubst x y c')
+  end.
 
 End Syntax.
 
@@ -195,15 +203,11 @@ Arguments Star {varType valType op}.
 Arguments Alloc {varType valType op}.
 Arguments Free {varType valType op}.
 Arguments esubst {varType valType op}.
+Arguments csubst {varType valType op}.
 
-(* Concrete syntax, written inside [<{ ... }>]. Commands and expressions live
-   in two separate custom entries, so the dereference [[e]] and the heap write
-   [[a] := e] never compete with each other nor with term-level notations.
-   Levels follow [Imp.v]: [;;] binds tighter than [⊕]. In an expression a
-   bare identifier is a program variable; a store assignment marks its
-   target with a backtick, [`x := e], so that no command starts with an
-   identifier (which would clash with the keywords [skip] and [error]).
-   [{ t }] embeds an arbitrary Rocq term, an [expr] or a [com]. *)
+Notation "e .[ y // x ]" := (esubst x y e)
+  (left associativity, format "e .[ y  //  x ]").
+
 Declare Custom Entry hexpr.
 Declare Custom Entry hcom.
 Declare Scope imp_scope.
@@ -218,6 +222,7 @@ Notation "[ e ]" := (Deref e) (in custom hexpr at level 0, e custom hexpr at lev
 
 Notation "( c )" := c (in custom hcom at level 0, c custom hcom at level 99).
 Notation "{ c }" := c (in custom hcom at level 0, c constr).
+Notation "c" := c (in custom hcom at level 0, c global).
 Notation "'skip'" := Skip (in custom hcom at level 0).
 Notation "'error'" := Error (in custom hcom at level 0).
 Notation "'free' x" := (Free x) (in custom hcom at level 70, x ident).
@@ -239,21 +244,17 @@ Notation "c1 ⊕ c2" := (Choice c1 c2)
 Notation "'local' x 'in' c" := (Local x c)
   (in custom hcom at level 90, x ident, c custom hcom at level 90,
    format "'local'  x  'in'  c").
+(* The paper's [C[y/x]]. *)
+Notation "c [ y / x ]" := (csubst x y c)
+  (in custom hcom at level 1, left associativity, y ident, x ident,
+   format "c [ y / x ]").
 
-Section NotationTest.
-Local Open Scope imp_scope.
-Context (varType : choiceType) (valType : monoidType) (op : Type).
-Context (e : expr varType valType op) (x y : varType) (P : com varType valType op).
-Check <{ `y := [x] ;; [x] := y ;; (alloc y ;; nondet x)★ ;;
-         free x ⊕ {P} ;; assume {e} ;; skip ;; error }>.
-Check (<{ local x in (local y in nondet y) ;; `x := y }> : com varType valType op).
-Check (<{ skip ;; (local x in skip ⊕ skip) }> : com varType valType op).
-Check <{ `x := [[x]] ;; [[x]] := {e} }>.
-End NotationTest.
+(* The (partial) denotation of the binary operators *)
+Class Denote (op V : Type) := denote : op -> V -> V -> option V.
 
 Section Prog.
 Context (varType : choiceType) (valType : monoidType) (loc : {fset valType}).
-Context (op : Type) (denote : op -> valType -> valType -> option valType).
+Context (op : Type) {D : Denote op valType}.
 
 Abbreviation store := (store varType valType).
 Abbreviation heap := (heap valType loc).
@@ -291,15 +292,34 @@ Fixpoint eval_expr (e : expr) (sh : state) : option valType :=
   | Const v => Some v
   end.
 
-(* Behave like a Either ADT and satisfy monadic laws *)
-Inductive result : Type :=
-| RNormal : state -> result
-| RError  : state -> result.
+Definition null : valType := one.
 
-Definition ret (s : state) : result := RNormal s.
+(* [etrue b]: the expression [b] is true interpreted as ≠ 0 like in C.
+  So in our mechanisation it should evaluates [b] to a value other than [null].
+  It use in the [assume] command.
+*)
+Definition etrue (b : expr) : sprop :=
+  pure varType valType loc
+    (fun σ => exists v, eval_expr b σ = Some v /\ v != null).
+
+(* The paper's equality [x = e], i.e. [x] and [e] are equal in the store *)
+Definition expeq (x : varType) (e : expr) : sprop :=
+  pure varType valType loc
+    (fun σ => exists v, σ.1.[? x] = Some v /\ eval_expr e σ = Some v).
+
+(* The exit conditions of the paper (§3, Fig. 6): [ok] for normal
+   termination, [er] for an error. The paper's error labels [er(l)] are not
+   modelled. *)
+Inductive exit := ok | er.
+
+(* A result [(ε, σ)] of the semantics: the exit condition and the final
+   state. Behaves like an Either ADT and satisfies the monadic laws. *)
+Definition result := (exit * state)%type.
+
+Definition ret (s : state) : result := (ok, s).
 
 Definition bind (r : result) (f : state -> result) : result :=
-  match r with RNormal s => f s | RError s => RError s end.
+  match r with (ok, s) => f s | (er, s) => (er, s) end.
 
 Definition fmap (f : state -> state) (r : result) : result :=
   bind r (fun s => ret (f s)).
@@ -308,60 +328,42 @@ Lemma ret_bind s f : bind (ret s) f = f s.
 Proof. by []. Qed.
 
 Lemma bind_ret r : bind r ret = r.
-Proof. by case: r. Qed.
+Proof. by case: r => -[]. Qed.
 
 Lemma bindA r f g : bind (bind r f) g = bind r (fun s => bind (f s) g).
-Proof. by case: r. Qed.
-
-(* Assertions on results, for the triples. [pexist], [por], [pimp] lift
-   [aexist], [aor], [aimp]; [pexist] goes through [fmap], so, like [Local] in
-   [cexec], it only rebinds [x] in normal results. [pstar Q R] is [hprod] on
-   the final state, keeping the exit condition. *)
-Definition postassertion := result -> Prop.
-
-Definition pexist (x : varType) (Q : postassertion) : postassertion :=
-  fun r => exists v, Q (fmap (fun σ => ⟨ x ↦ v ; {σ.1} | {σ.2} ⟩) r).
-Definition por (Q1 Q2 : postassertion) : postassertion := fun r => Q1 r \/ Q2 r.
-Definition pimp (Q Q' : postassertion) : Prop := forall r, Q r -> Q' r.
-Definition pstar (Q : postassertion) (R : sprop) : postassertion :=
-  fun r => match r with
-  | RNormal σ => ⟦ {fun s h => Q (RNormal ⟨ s | h ⟩)} ★ {R} ⟧ σ.1 σ.2
-  | RError σ  => ⟦ {fun s h => Q (RError ⟨ s | h ⟩)} ★ {R} ⟧ σ.1 σ.2
-  end.
+Proof. by case: r => -[]. Qed.
 
 Reserved Notation "st0 =[ c ]=> st1"
   (at level 40, c at level 99, st1 at level 39).
 
-Definition null : valType := one.
-
 Inductive cexec: state -> com -> result -> Prop :=
 | cexec_skip: forall s,
-  s =[ <{ skip }> ]=> RNormal s
+  s =[ <{ skip }> ]=> (ok, s)
 | cexec_error: forall s,
-  s =[ <{ error }> ]=> RError s
+  s =[ <{ error }> ]=> (er, s)
 | cexec_assign_store: forall s x a,
   s =[ <{ `x := {a} }> ]=>
-    if eval_expr a s is Some v then RNormal ⟨ x ↦ v ; {s.1} | {s.2} ⟩
-    else RError s
+    if eval_expr a s is Some v then (ok, ⟨ x ↦ v ; {s.1} | {s.2} ⟩)
+    else (er, s)
 | cexec_assign_heap: forall s x y,
   s =[ <{ [{x}] := {y} }> ]=>
     if (olet l  := eval_expr x s in
         olet l' := insub l in
         olet v  := eval_expr y s in
         if l' \in domf s.2 then Some ⟨ {s.1} | l' ↦ v ; {s.2} ⟩ else None)
-      is Some s' then RNormal s' else RError s
+      is Some s' then (ok, s') else (er, s)
 | cexec_nondet: forall s x any,
-  s =[ <{ nondet x }> ]=> RNormal ⟨ x ↦ any ; {s.1} | {s.2} ⟩
+  s =[ <{ nondet x }> ]=> (ok, ⟨ x ↦ any ; {s.1} | {s.2} ⟩)
 | cexec_assume: forall s b,
-  s =[ <{ assume {b} }> ]=> if eval_expr b s == Some null then RError s
+  s =[ <{ assume {b} }> ]=> if eval_expr b s == Some null then (er, s)
                            else ret s
 | cexec_seq: forall c1 c2 s s' r,
-  s  =[ c1 ]=> RNormal s' ->
+  s  =[ c1 ]=> (ok, s') ->
   s' =[ c2 ]=> r ->
   s  =[ <{ {c1} ;; {c2} }> ]=> r
 | cexec_seq_error: forall c1 c2 s sf,
-  s  =[ c1 ]=> RError sf ->
-  s  =[ <{ {c1} ;; {c2} }> ]=> RError sf
+  s  =[ c1 ]=> (er, sf) ->
+  s  =[ <{ {c1} ;; {c2} }> ]=> (er, sf)
 | cexec_choice_left: forall s c1 c2 r,
   s =[ c1 ]=> r ->
   s =[ <{ {c1} ⊕ {c2} }> ]=> r
@@ -380,13 +382,13 @@ Inductive cexec: state -> com -> result -> Prop :=
   s =[ <{ {c}★ }> ]=> r
 | cexec_alloc: forall s x l any,
   l \notin domf s.2 ->
-  s  =[ <{ alloc x }> ]=> RNormal ⟨ x ↦ val l ; {s.1} | l ↦ any ; {s.2} ⟩ (* Following C malloc that put any value *)
+  s  =[ <{ alloc x }> ]=> (ok, ⟨ x ↦ val l ; {s.1} | l ↦ any ; {s.2} ⟩) (* Following C malloc that put any value *)
 | cexec_free: forall (s : state) x,
   s  =[ <{ free x }> ]=>
     if (olet v := s.1.[? x] in
         olet l := insub v in
         if l \in domf s.2 then Some ⟨ {s.1} | {s.2.[~ l]} ⟩ else None)
-      is Some s' then RNormal s' else RError s
+      is Some s' then (ok, s') else (er, s)
 where "st0 =[ c ]=> st1" := (cexec st0 c st1).
 
 (* Inversion lemmas for [cexec]. *)
@@ -403,15 +405,15 @@ Ltac cexec_invE := let H := fresh "H" in move=> H; inversion_clear H; subst.
    computed from the state. *)
 Ltac cexecE_det lem := split; [by cexec_invE | move=> ->; exact: lem].
 
-Lemma cexec_skipE (s : state) r : s =[ <{ skip }> ]=> r <-> r = RNormal s.
+Lemma cexec_skipE (s : state) r : s =[ <{ skip }> ]=> r <-> r = (ok, s).
 Proof. by cexecE_det (cexec_skip s). Qed.
 
-Lemma cexec_errorE (s : state) r : s =[ <{ error }> ]=> r <-> r = RError s.
+Lemma cexec_errorE (s : state) r : s =[ <{ error }> ]=> r <-> r = (er, s).
 Proof. by cexecE_det (cexec_error s). Qed.
 
 Lemma cexec_assign_storeE (s : state) x a r :
   s =[ <{ `x := {a} }> ]=> r <->
-  r = if eval_expr a s is Some v then RNormal ⟨ x ↦ v ; {s.1} | {s.2} ⟩ else RError s.
+  r = if eval_expr a s is Some v then (ok, ⟨ x ↦ v ; {s.1} | {s.2} ⟩) else (er, s).
 Proof. by cexecE_det (cexec_assign_store s x a). Qed.
 
 Lemma cexec_assign_heapE (s : state) a e r :
@@ -420,12 +422,12 @@ Lemma cexec_assign_heapE (s : state) a e r :
           olet l' := insub l in
           olet v  := eval_expr e s in
           if l' \in domf s.2 then Some ⟨ {s.1} | l' ↦ v ; {s.2} ⟩ else None)
-        is Some s' then RNormal s' else RError s.
+        is Some s' then (ok, s') else (er, s).
 Proof. by cexecE_det (cexec_assign_heap s a e). Qed.
 
 Lemma cexec_assumeE (s : state) b r :
   s =[ <{ assume {b} }> ]=> r <->
-  r = if eval_expr b s == Some null then RError s else RNormal s.
+  r = if eval_expr b s == Some null then (er, s) else (ok, s).
 Proof. by cexecE_det (cexec_assume s b). Qed.
 
 Lemma cexec_freeE (s : state) x r :
@@ -433,11 +435,11 @@ Lemma cexec_freeE (s : state) x r :
   r = if (olet v := s.1.[? x] in
           olet l := insub v in
           if l \in domf s.2 then Some ⟨ {s.1} | {s.2.[~ l]} ⟩ else None)
-        is Some s' then RNormal s' else RError s.
+        is Some s' then (ok, s') else (er, s).
 Proof. by cexecE_det (cexec_free s x). Qed.
 
 Lemma cexec_nondetE (s : state) x r :
-  s =[ <{ nondet x }> ]=> r <-> exists any, r = RNormal ⟨ x ↦ any ; {s.1} | {s.2} ⟩.
+  s =[ <{ nondet x }> ]=> r <-> exists any, r = (ok, ⟨ x ↦ any ; {s.1} | {s.2} ⟩).
 Proof.
 split=> [|[any ->]]; last exact: cexec_nondet.
 by cexec_invE; econstructor.
@@ -445,8 +447,8 @@ Qed.
 
 Lemma cexec_seqE (s : state) c1 c2 r :
   s =[ <{ {c1} ;; {c2} }> ]=> r <->
-  (exists s', s =[ c1 ]=> RNormal s' /\ s' =[ c2 ]=> r) \/
-  (exists sf, s =[ c1 ]=> RError sf /\ r = RError sf).
+  (exists s', s =[ c1 ]=> (ok, s') /\ s' =[ c2 ]=> r) \/
+  (exists sf, s =[ c1 ]=> (er, sf) /\ r = (er, sf)).
 Proof.
 split=> [|[[s' [H1 H2]]|[sf [H1 ->]]]]; last 2 first.
 - exact: cexec_seq H1 H2.
@@ -477,7 +479,7 @@ Qed.
 Lemma cexec_allocE (s : state) x r :
   s =[ <{ alloc x }> ]=> r <->
   exists (l : loc) any, l \notin domf s.2 /\
-    r = RNormal ⟨ x ↦ val l ; {s.1} | l ↦ any ; {s.2} ⟩.
+    r = (ok, ⟨ x ↦ val l ; {s.1} | l ↦ any ; {s.2} ⟩).
 Proof.
 split=> [|[l [any [Hl ->]]]]; last exact: cexec_alloc.
 by cexec_invE; do 2 econstructor; split; last reflexivity; eassumption.
@@ -525,7 +527,7 @@ Qed.
 Lemma seq_skipr c : [ <{ {c} ;; skip }> ~ c ].
 Proof.
 move=> s r; split=> [/cexec_seqE [[s' [H /cexec_skipE ->]]|[sf [H ->]]] //|H].
-case: r H => [s'|sf] H; last exact: cexec_seq_error H.
+case: r H => [[] s'] H; last exact: cexec_seq_error H.
 exact: cexec_seq H (cexec_skip s').
 Qed.
 
@@ -631,7 +633,7 @@ Section MemoryViolation.
 (* free(x) errs in place when x is dangling. *)
 Lemma free_err x (s : state) r :
   (forall v l, s.1.[? x] = Some v -> insub v = Some l -> l \notin domf s.2) ->
-  s =[ <{ free x }> ]=> r <-> r = RError s.
+  s =[ <{ free x }> ]=> r <-> r = (er, s).
 Proof.
 move=> Hd; rewrite cexec_freeE.
 case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
@@ -640,30 +642,30 @@ Qed.
 
 Lemma free_null (s : state) x r :
   null \notin loc -> s.1.[? x] = Some null ->
-  s =[ <{ free x }> ]=> r <-> r = RError s.
+  s =[ <{ free x }> ]=> r <-> r = (er, s).
 Proof.
 move=> Hnull Hx; apply: free_err => v l.
 by rewrite Hx => -[<-]; rewrite insubN.
 Qed.
 
 Lemma mapsnot_dangling x (s : state) :
-  ⟦ x ↦̸ ⟧ s.1 s.2 ->
+  <| x ↦̸ |> s.1 s.2 ->
   forall v l, s.1.[? x] = Some v -> insub v = Some l -> l \notin domf s.2.
 Proof. by case=> l [Hx Hl] v l'; rewrite Hx => -[<-]; rewrite valK => -[<-]. Qed.
 
 Lemma free_mapsnot x (s : state) r :
-  ⟦ x ↦̸ ⟧ s.1 s.2 -> s =[ <{ free x }> ]=> r <-> r = RError s.
+  <| x ↦̸ |> s.1 s.2 -> s =[ <{ free x }> ]=> r <-> r = (er, s).
 Proof. by move/mapsnot_dangling; exact: free_err. Qed.
 
 Lemma free_allocated (s : state) x (l : loc) r :
   s.1.[? x] = Some (val l) -> l \in domf s.2 ->
-  s =[ <{ free x }> ]=> r <-> r = RNormal ⟨ {s.1} | {s.2.[~ l]} ⟩.
+  s =[ <{ free x }> ]=> r <-> r = (ok, ⟨ {s.1} | {s.2.[~ l]} ⟩).
 Proof. by move=> Hx Hl; rewrite cexec_freeE Hx /= valK /= Hl. Qed.
 
 (* free(x) errs in place exactly when x holds no location or x holds an unallocated one. *)
 Lemma free_errE (s : state) x :
-  (forall r, s =[ <{ free x }> ]=> r <-> r = RError s) <->
-  (forall v, s.1.[? x] = Some v -> v \notin loc) \/ ⟦ x ↦̸ ⟧ s.1 s.2.
+  (forall r, s =[ <{ free x }> ]=> r <-> r = (er, s)) <->
+  (forall v, s.1.[? x] = Some v -> v \notin loc) \/ <| x ↦̸ |> s.1 s.2.
 Proof.
 split=> [H|[Hn|Hd] r]; last 2 first.
 - by apply: free_err => v l /Hn Hv; rewrite insubN.
@@ -677,7 +679,7 @@ Qed.
 
 Lemma write_unallocated (s : state) a e (l : loc) r :
   eval_expr a s = Some (val l) -> l \notin domf s.2 ->
-  s =[ <{ [{a}] := {e} }> ]=> r <-> r = RError s.
+  s =[ <{ [{a}] := {e} }> ]=> r <-> r = (er, s).
 Proof.
 move=> Ha Hl; rewrite cexec_assign_heapE Ha /= valK /=.
 by case: eval_expr => //= v; rewrite (negbTE Hl).
@@ -686,7 +688,7 @@ Qed.
 (* *x := e errs in place on a dangling x. *)
 Lemma write_dangling x e (s : state) r :
   (forall v l, s.1.[? x] = Some v -> insub v = Some l -> l \notin domf s.2) ->
-  s =[ <{ [x] := {e} }> ]=> r <-> r = RError s.
+  s =[ <{ [x] := {e} }> ]=> r <-> r = (er, s).
 Proof.
 move=> Hd; rewrite cexec_assign_heapE /=.
 case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
@@ -696,7 +698,7 @@ Qed.
 (* y := *x errs in place on a dangling x. *)
 Lemma read_dangling x y (s : state) r :
   (forall v l, s.1.[? x] = Some v -> insub v = Some l -> l \notin domf s.2) ->
-  s =[ <{ `y := [x] }> ]=> r <-> r = RError s.
+  s =[ <{ `y := [x] }> ]=> r <-> r = (er, s).
 Proof.
 move=> Hd; rewrite cexec_assign_storeE /=.
 case Ex: s.1.[? x] => [v|] //=; case El: (insub v) => [l|] //=.
@@ -741,7 +743,7 @@ Inductive uses x : com -> Prop :=
 
 (* Using a dangling x errs in place. *)
 Lemma uses_err x c (s : state) :
-  dangling x s.1 s.2 -> uses x c -> forall r, s =[ c ]=> r <-> r = RError s.
+  dangling x s.1 s.2 -> uses x c -> forall r, s =[ c ]=> r <-> r = (er, s).
 Proof.
 move=> Hd; elim=> {c} [|y e He|e|a e Ha|a e He|c1 c2 _ IH|c1 c2 _ IH1 _ IH2] r.
 - exact: free_err.
@@ -756,7 +758,7 @@ move=> Hd; elim=> {c} [|y e He|e|a e Ha|a e He|c1 c2 _ IH|c1 c2 _ IH1 _ IH2] r.
 Qed.
 
 Lemma free_dangles (s s' : state) x y :
-  s.1.[? x] = s.1.[? y] -> s =[ <{ free y }> ]=> RNormal s' -> ⟦ x ↦̸ ⟧ s'.1 s'.2.
+  s.1.[? x] = s.1.[? y] -> s =[ <{ free y }> ]=> (ok, s') -> <| x ↦̸ |> s'.1 s'.2.
 Proof.
 move=> Hxy /cexec_freeE; rewrite -Hxy.
 case Ex: s.1.[? x] => [v|] //=; case: insubP => [l _ Ev|] //=.
@@ -764,7 +766,7 @@ by case: ifP => // _ [->]; exists l; rewrite /= Ex Ev mem_remfF.
 Qed.
 
 Lemma mapsnot_free x y (s1 s2 : state) :
-  ⟦ x ↦̸ ⟧ s1.1 s1.2 -> s1 =[ <{ free y }> ]=> RNormal s2 -> ⟦ x ↦̸ ⟧ s2.1 s2.2.
+  <| x ↦̸ |> s1.1 s1.2 -> s1 =[ <{ free y }> ]=> (ok, s2) -> <| x ↦̸ |> s2.1 s2.2.
 Proof.
 case=> l [Hx Hl] /cexec_freeE.
 case: s1.1.[? y] => [v|] //=; case: (insub v) => [l'|] //=.
@@ -773,14 +775,14 @@ Qed.
 
 Lemma mapsnot_assign_store x y a : x != y ->
   forall s1 s2 : state,
-  ⟦ x ↦̸ ⟧ s1.1 s1.2 -> s1 =[ <{ `y := {a} }> ]=> RNormal s2 -> ⟦ x ↦̸ ⟧ s2.1 s2.2.
+  <| x ↦̸ |> s1.1 s1.2 -> s1 =[ <{ `y := {a} }> ]=> (ok, s2) -> <| x ↦̸ |> s2.1 s2.2.
 Proof.
 move=> Hxy s1 s2 [l [Hx Hl]] /cexec_assign_storeE.
 by case: eval_expr => [v|] //= [->]; exists l; rewrite /= fnd_set (negbTE Hxy) Hx.
 Qed.
 
 Lemma mapsnot_assign_heap x a e (s1 s2 : state) :
-  ⟦ x ↦̸ ⟧ s1.1 s1.2 -> s1 =[ <{ [{a}] := {e} }> ]=> RNormal s2 -> ⟦ x ↦̸ ⟧ s2.1 s2.2.
+  <| x ↦̸ |> s1.1 s1.2 -> s1 =[ <{ [{a}] := {e} }> ]=> (ok, s2) -> <| x ↦̸ |> s2.1 s2.2.
 Proof.
 case=> l [Hx Hl] /cexec_assign_heapE.
 case: (eval_expr a s1) => [va|] //=; case: (insub va) => [la|] //=.
@@ -790,19 +792,19 @@ by apply: contraNneq Hl => ->.
 Qed.
 
 Lemma skip_inv (p : sprop) (s1 s2 : state) :
-  p s1.1 s1.2 -> s1 =[ <{ skip }> ]=> RNormal s2 -> p s2.1 s2.2.
+  p s1.1 s1.2 -> s1 =[ <{ skip }> ]=> (ok, s2) -> p s2.1 s2.2.
 Proof. by move=> H /cexec_skipE [->]. Qed.
 
 Lemma keep_mapsnot {x P} :
   (forall s1 s2 : state,
-    ⟦ x ↦̸ ⟧ s1.1 s1.2 -> s1 =[ P ]=> RNormal s2 -> ⟦ x ↦̸ ⟧ s2.1 s2.2) ->
-  forall s1 s2 : state, ⟦ x ↦̸ ⟧ s1.1 s1.2 -> s1 =[ P ]=> RNormal s2 ->
+    <| x ↦̸ |> s1.1 s1.2 -> s1 =[ P ]=> (ok, s2) -> <| x ↦̸ |> s2.1 s2.2) ->
+  forall s1 s2 : state, <| x ↦̸ |> s1.1 s1.2 -> s1 =[ P ]=> (ok, s2) ->
   forall v l, s2.1.[? x] = Some v -> insub v = Some l -> l \notin domf s2.2.
 Proof. by move=> K s1 s2 H1 /(K _ _ H1) /mapsnot_dangling. Qed.
 
 Lemma seq_errorE (s : state) P r :
   s =[ <{ {P} ;; error }> ]=> r <->
-  exists s', r = RError s' /\ (s =[ P ]=> RNormal s' \/ s =[ P ]=> RError s').
+  exists s', r = (er, s') /\ (s =[ P ]=> (ok, s') \/ s =[ P ]=> (er, s')).
 Proof.
 rewrite cexec_seqE; split=> [[[s' [H /cexec_errorE ->]]|[sf [H ->]]]|[s' [-> [H|H]]]].
 - by exists s'; split=> //; left.
@@ -813,15 +815,15 @@ Qed.
 
 Lemma seq_errorP (s : state) P r :
   s =[ <{ {P} ;; error }> ]=> r <->
-  exists s', r = RError s' /\ s =[ <{ {P} ;; error }> ]=> RError s'.
+  exists s', r = (er, s') /\ s =[ <{ {P} ;; error }> ]=> (er, s').
 Proof.
 split=> [H|[s' [-> //]]].
 by have /seq_errorE [s' [E _]] := H; exists s'; rewrite -E.
 Qed.
 
 Lemma seq_err_in_place (p : sprop) P c (s : state) r :
-  (forall s', s =[ P ]=> RNormal s' -> p s'.1 s'.2) ->
-  (forall (s' : state) r', p s'.1 s'.2 -> s' =[ c ]=> r' <-> r' = RError s') ->
+  (forall s', s =[ P ]=> (ok, s') -> p s'.1 s'.2) ->
+  (forall (s' : state) r', p s'.1 s'.2 -> s' =[ c ]=> r' <-> r' = (er, s')) ->
   s =[ <{ {P} ;; {c} }> ]=> r <-> s =[ <{ {P} ;; error }> ]=> r.
 Proof.
 move=> HP Hc; rewrite !cexec_seqE.
@@ -832,26 +834,26 @@ Qed.
 
 (* Once P leaves x dangling, any use of x errs. *)
 Lemma use_dangling x P c (s : state) r :
-  (forall s' : state, s =[ P ]=> RNormal s' -> dangling x s'.1 s'.2) ->
+  (forall s' : state, s =[ P ]=> (ok, s') -> dangling x s'.1 s'.2) ->
   uses x c ->
   s =[ <{ {P} ;; {c} }> ]=> r <->
-  exists s', r = RError s' /\ s =[ <{ {P} ;; error }> ]=> RError s'.
+  exists s', r = (er, s') /\ s =[ <{ {P} ;; error }> ]=> (er, s').
 Proof.
 move=> HP Hc; rewrite -seq_errorP; apply: (seq_err_in_place (dangling x)) => //.
 by move=> s' r' Hd; exact: uses_err Hd Hc r'.
 Qed.
 
 Lemma free_dangling x P (s : state) r :
-  (forall s' : state, s =[ P ]=> RNormal s' ->
+  (forall s' : state, s =[ P ]=> (ok, s') ->
     forall v l, s'.1.[? x] = Some v -> insub v = Some l -> l \notin domf s'.2) ->
   s =[ <{ {P} ;; free x }> ]=> r <->
-  exists s', r = RError s' /\ s =[ <{ {P} ;; error }> ]=> RError s'.
+  exists s', r = (er, s') /\ s =[ <{ {P} ;; error }> ]=> (er, s').
 Proof. by move=> HP; exact: use_dangling HP (uses_free x). Qed.
 
 Lemma free_unbound x P (s : state) r :
   (forall v, s.1.[? x] = Some v -> v \notin loc) ->
   (forall s1 s2 : state, (forall v, s1.1.[? x] = Some v -> v \notin loc) ->
-    s1 =[ P ]=> RNormal s2 -> forall v, s2.1.[? x] = Some v -> v \notin loc) ->
+    s1 =[ P ]=> (ok, s2) -> forall v, s2.1.[? x] = Some v -> v \notin loc) ->
   s =[ <{ {P} ;; free x }> ]=> r <-> s =[ <{ {P} ;; error }> ]=> r.
 Proof.
 move=> Hx HP; rewrite seq_errorP; apply: free_dangling => s' /(HP _ _ Hx) Hn v l /Hn Hv.
@@ -862,14 +864,14 @@ Qed.
 Section Dangling.
 Context {x : varType} {P : com}.
 
-Hypothesis keep_dangling : forall s1 s2 : state, ⟦ x ↦̸ ⟧ s1.1 s1.2 ->
-  s1 =[ P ]=> RNormal s2 ->
+Hypothesis keep_dangling : forall s1 s2 : state, <| x ↦̸ |> s1.1 s1.2 ->
+  s1 =[ P ]=> (ok, s2) ->
   forall v l, s2.1.[? x] = Some v -> insub v = Some l -> l \notin domf s2.2.
 
 Lemma use_after_lifetime (s : state) y c r :
   s.1.[? x] = s.1.[? y] ->
   (forall (s : state) r, (forall v l, s.1.[? x] = Some v -> insub v = Some l ->
-     l \notin domf s.2) -> s =[ c ]=> r <-> r = RError s) ->
+     l \notin domf s.2) -> s =[ c ]=> r <-> r = (er, s)) ->
   s =[ <{ free y ;; {P} ;; {c} }> ]=> r <-> s =[ <{ free y ;; {P} ;; error }> ]=> r.
 Proof.
 move=> Hxy Hc; rewrite -!seqA; apply: (seq_err_in_place
@@ -880,7 +882,7 @@ Qed.
 
 Lemma use_after_free c :
   (forall (s : state) r, (forall v l, s.1.[? x] = Some v -> insub v = Some l ->
-     l \notin domf s.2) -> s =[ c ]=> r <-> r = RError s) ->
+     l \notin domf s.2) -> s =[ c ]=> r <-> r = (er, s)) ->
   [ <{ free x ;; {P} ;; {c} }> ~ <{ free x ;; {P} ;; error }> ].
 Proof. by move=> Hc s r; exact: use_after_lifetime. Qed.
 
@@ -889,32 +891,32 @@ Lemma double_free :
 Proof. exact: use_after_free (free_err x). Qed.
 
 Lemma free_unallocated (s : state) r :
-  ⟦ x ↦̸ ⟧ s.1 s.2 -> s =[ <{ {P} ;; free x }> ]=> r <-> s =[ <{ {P} ;; error }> ]=> r.
+  <| x ↦̸ |> s.1 s.2 -> s =[ <{ {P} ;; free x }> ]=> r <-> s =[ <{ {P} ;; error }> ]=> r.
 Proof. by move=> Hx; rewrite seq_errorP; apply: free_dangling => s'; exact: keep_dangling Hx. Qed.
 
 End Dangling.
 
 Lemma use_after_lifetime_reach x y P c (s s1 s2 : state) :
   (forall (s : state) r, (forall v l, s.1.[? x] = Some v -> insub v = Some l ->
-     l \notin domf s.2) -> s =[ c ]=> r <-> r = RError s) ->
-  s =[ <{ free y }> ]=> RNormal s1 -> s1 =[ P ]=> RNormal s2 ->
+     l \notin domf s.2) -> s =[ c ]=> r <-> r = (er, s)) ->
+  s =[ <{ free y }> ]=> (ok, s1) -> s1 =[ P ]=> (ok, s2) ->
   (forall v l, s2.1.[? x] = Some v -> insub v = Some l -> l \notin domf s2.2) ->
-  s =[ <{ free y ;; {P} ;; {c} }> ]=> RError s2.
+  s =[ <{ free y ;; {P} ;; {c} }> ]=> (er, s2).
 Proof.
 move=> Hc H1 H2 Hx; apply: cexec_seq H1 _; apply: cexec_seq H2 _.
 exact/(Hc _ _ Hx).
 Qed.
 
 Lemma double_free_reach x P (s s1 s2 : state) :
-  s =[ <{ free x }> ]=> RNormal s1 -> s1 =[ P ]=> RNormal s2 ->
+  s =[ <{ free x }> ]=> (ok, s1) -> s1 =[ P ]=> (ok, s2) ->
   (forall v l, s2.1.[? x] = Some v -> insub v = Some l -> l \notin domf s2.2) ->
-  s =[ <{ free x ;; {P} ;; free x }> ]=> RError s2.
+  s =[ <{ free x ;; {P} ;; free x }> ]=> (er, s2).
 Proof. exact: use_after_lifetime_reach (free_err x). Qed.
 
 (** Concrete programs examples, as corollaries. *)
 
 Let seq_det (s s' : state) c1 c2 r :
-  (forall r', s =[ c1 ]=> r' <-> r' = RNormal s') ->
+  (forall r', s =[ c1 ]=> r' <-> r' = (ok, s')) ->
   s =[ <{ {c1} ;; {c2} }> ]=> r <-> s' =[ c2 ]=> r.
 Proof.
 move=> H1; split=> [/cexec_seqE [[s0 [/H1 [<-] //]]|[sf [/H1 //]]]|H2].
@@ -939,7 +941,7 @@ Qed.
 *)
 Example free_free (s : state) x (l : loc) v r :
   s.1.[? x] = Some (val l) -> s.2.[? l] = Some v ->
-  s =[ <{ free x ;; free x }> ]=> r <-> r = RError ⟨ {s.1} | {s.2.[~ l]} ⟩.
+  s =[ <{ free x ;; free x }> ]=> r <-> r = (er, ⟨ {s.1} | {s.2.[~ l]} ⟩).
 Proof.
 move=> Hx Hv; have Hl : l \in domf s.2 by rewrite -fndSome Hv.
 have E := double_free (keep_mapsnot (skip_inv (mapsnot x))).
@@ -956,7 +958,7 @@ Qed.
 Example free_assign_free (s : state) x y v (l : loc) r :
   x != y -> s.1.[? x] = Some (val l) -> l \in domf s.2 ->
   s =[ <{ free x ;; `y := {Const v} ;; free x }> ]=> r <->
-  r = RError ⟨ y ↦ v ; {s.1} | {s.2.[~ l]} ⟩.
+  r = (er, ⟨ y ↦ v ; {s.1} | {s.2.[~ l]} ⟩).
 Proof.
 move=> Hxy Hx Hl.
 rewrite (double_free (keep_mapsnot (mapsnot_assign_store _ _ (Const v) Hxy))).
@@ -974,7 +976,7 @@ Qed.
 *)
 Example free_alloc_free (s : state) x y (l : loc) :
   s.1.[? x] = Some (val l) -> l \in domf s.2 ->
-  s =[ <{ free x ;; alloc y ;; free x }> ]=> RNormal ⟨ y ↦ val l ; {s.1} | {s.2.[~ l]} ⟩.
+  s =[ <{ free x ;; alloc y ;; free x }> ]=> (ok, ⟨ y ↦ val l ; {s.1} | {s.2.[~ l]} ⟩).
 Proof.
 move=> Hx Hl; apply: cexec_seq ((free_allocated _ _ _ _ Hx Hl).2 erefl) _.
 have Hl' : l \notin domf s.2.[~ l] by rewrite mem_remfF.
@@ -993,7 +995,7 @@ Qed.
 Example free_alloc_free_err (s : state) x y (l l' : loc) v :
   x != y -> s.1.[? x] = Some (val l) -> l \in domf s.2 -> l' \notin domf s.2 ->
   s =[ <{ free x ;; alloc y ;; free x }> ]=>
-    RError ⟨ y ↦ val l' ; {s.1} | l' ↦ v ; {s.2.[~ l]} ⟩.
+    (er, ⟨ y ↦ val l' ; {s.1} | l' ↦ v ; {s.2.[~ l]} ⟩).
 Proof.
 move=> Hxy Hx Hl Hl'.
 apply: double_free_reach ((free_allocated _ _ _ _ Hx Hl).2 erefl) _ _.
@@ -1007,7 +1009,7 @@ Qed.
    raised by the second free. *)
 Example double_free_ret_error (s : state) x r :
   s =[ <{ alloc x ;; free x ;; free x }> ]=> r <->
-  exists l : loc, l \notin domf s.2 /\ r = RError ⟨ x ↦ val l ; {s.1} | {s.2} ⟩.
+  exists l : loc, l \notin domf s.2 /\ r = (er, ⟨ x ↦ val l ; {s.1} | {s.2} ⟩).
 Proof.
 rewrite seq_alloc; split=> [[l [any [Hl]]]|[l [Hl ->]]].
   rewrite (free_free _ _ l any) /= ?fnd_set ?eqxx // remf1_set eqxx remf1_id //.
@@ -1023,7 +1025,7 @@ Qed.
 Example free_write (s : state) x (l : loc) v e r :
   s.1.[? x] = Some (val l) -> s.2.[? l] = Some v ->
   s =[ <{ free x ;; [x] := {e} }> ]=> r <->
-  r = RError ⟨ {s.1} | {s.2.[~ l]} ⟩.
+  r = (er, ⟨ {s.1} | {s.2.[~ l]} ⟩).
 Proof.
 move=> Hx Hv; have Hl : l \in domf s.2 by rewrite -fndSome Hv.
 have E := use_after_free (keep_mapsnot (skip_inv (mapsnot x))) _ (write_dangling x e).
@@ -1039,7 +1041,7 @@ Qed.
 Example free_read (s : state) x y (l : loc) r :
   s.1.[? x] = Some (val l) -> l \in domf s.2 ->
   s =[ <{ free x ;; `y := [x] }> ]=> r <->
-  r = RError ⟨ {s.1} | {s.2.[~ l]} ⟩.
+  r = (er, ⟨ {s.1} | {s.2.[~ l]} ⟩).
 Proof.
 move=> Hx Hl.
 have E := use_after_free (keep_mapsnot (skip_inv (mapsnot x))) _ (read_dangling x y).
@@ -1052,7 +1054,7 @@ Qed.
    raised by the write. *)
 Example use_after_free_ret_error (s : state) x e r :
   s =[ <{ alloc x ;; free x ;; [x] := {e} }> ]=> r <->
-  exists l : loc, l \notin domf s.2 /\ r = RError ⟨ x ↦ val l ; {s.1} | {s.2} ⟩.
+  exists l : loc, l \notin domf s.2 /\ r = (er, ⟨ x ↦ val l ; {s.1} | {s.2} ⟩).
 Proof.
 rewrite seq_alloc; split=> [[l [any [Hl]]]|[l [Hl ->]]].
   rewrite (free_write _ _ l any) /= ?fnd_set ?eqxx // remf1_set eqxx remf1_id //.
@@ -1071,7 +1073,7 @@ Qed.
 Example alias_free_write (s : state) x y (l : loc) v e r :
   s.1.[? x] = Some (val l) -> s.2.[? l] = Some v ->
   s =[ <{ `y := x ;; free y ;; [x] := {e} }> ]=> r <->
-  r = RError ⟨ y ↦ val l ; {s.1} | {s.2.[~ l]} ⟩.
+  r = (er, ⟨ y ↦ val l ; {s.1} | {s.2.[~ l]} ⟩).
 Proof.
 move=> Hx Hv; have Hl : l \in domf s.2 by rewrite -fndSome Hv.
 set s' := ⟨ y ↦ val l ; {s.1} | {s.2} ⟩.
@@ -1094,7 +1096,7 @@ Example alloc_free_unbound (s : state) x y r :
   x != y -> s.1.[? x] = None ->
   s =[ <{ alloc y ;; free x }> ]=> r <->
   exists (l : loc) any, l \notin domf s.2 /\
-    r = RError ⟨ y ↦ val l ; {s.1} | l ↦ any ; {s.2} ⟩.
+    r = (er, ⟨ y ↦ val l ; {s.1} | l ↦ any ; {s.2} ⟩).
 Proof.
 move=> Hxy Hx; rewrite free_unbound; first by move=> v; rewrite Hx.
   move=> s1 s2 Hn /cexec_allocE [l [any [_ [->]]]] v /=.
@@ -1112,7 +1114,7 @@ Qed.
 Example free_free_dangling (s : state) x z (l lz : loc) r :
   s.1.[? x] = Some (val l) -> l \notin domf s.2 ->
   s.1.[? z] = Some (val lz) -> lz \in domf s.2 ->
-  s =[ <{ free z ;; free x }> ]=> r <-> r = RError ⟨ {s.1} | {s.2.[~ lz]} ⟩.
+  s =[ <{ free z ;; free x }> ]=> r <-> r = (er, ⟨ {s.1} | {s.2.[~ lz]} ⟩).
 Proof.
 move=> Hx Hl Hz Hlz.
 rewrite (free_unallocated (keep_mapsnot (mapsnot_free x z))); first by exists l.
@@ -1124,8 +1126,11 @@ End MemoryViolation.
 
 End Prog.
 
-(* Operator sets, each at the weakest structure of the mathcomp hierarchy
-   that provides them. *)
+(* The paper's notation [x = x'], [x = v], [x = e[x'/x]] is written in the expression syntax [x ≡ y] or [x ≡ {Const v}]. *)
+#[warnings="-level-0-notation-not-closed"]
+Notation "x ≡ e" := (expeq _ _ _ _ x e)
+  (in custom ss at level 0, x ident, e custom hexpr at level 99).
+
 
 Section ZmodOps.
 Import GRing.Theory.
