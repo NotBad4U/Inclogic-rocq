@@ -1,5 +1,5 @@
 From mathcomp Require Import ssreflect ssrfun ssrbool eqtype choice ssrnat.
-From mathcomp Require Import ssralg ssrnum monoid order finmap finset.
+From mathcomp Require Import ssralg ssrnum monoid order finmap finset fintype.
 From Stdlib Require Import RelationClasses Morphisms Setoid.
 
 Local Open Scope fset_scope.
@@ -13,10 +13,10 @@ Definition fsubmap {K : choiceType} {V : Type} (m m' : {fmap K -> V}) : Prop :=
   forall k v, m.[? k] = Some v -> m'.[? k] = Some v.
 
 Section State.
-Context (varType valType : choiceType).
+Context (varType : finType) (valType : choiceType).
 Context (loc : {fset valType}).
 
-Definition store := {fmap varType -> valType}.
+Definition store := {ffun varType -> valType}.
 Definition heap := {fmap loc -> valType}.
 
 Definition sprop := store -> heap -> Prop.
@@ -48,7 +48,8 @@ Definition sprod (sh1 sh2 : state) : option state :=
   else None.
 
 Definition hprod (p q : sprop) : sprop :=
-  fun s h => exists sh1 sh2, sprod sh1 sh2 = Some (s, h) /\ (p s h) /\ (q s h).
+  fun s h => (exists sh1 sh2,
+    (sprod sh1 sh2 = Some (s, h)) /\ (p sh1.1 sh1.2) /\ (q sh2.1 sh2.2)).
 
 (* [pure b] is [encapsulate] for a condition on the state rather than a fixed
    [Prop] ([x = x'], [B], ...): it holds on the empty heap only. *)
@@ -74,7 +75,6 @@ Definition aand (p q : sprop) : sprop := fun s h => p s h /\ q s h.
 Definition aimp (p q : sprop) : Prop := forall s h, p s h -> q s h.
 
 End State.
-
 
 Declare Scope state_scope.
 Delimit Scope state_scope with state.

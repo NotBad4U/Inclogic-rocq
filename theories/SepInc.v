@@ -11,9 +11,11 @@ Local Open Scope state_scope.
 Notation "x ∈ A" := (x \in A) (at level 70, no associativity).
 Notation "x ∉ A" := (x \notin A) (at level 70, no associativity).
 
+Section SInc.
+Context (varType : choiceType) (valType : monoidType) (op : Type).
+Context (loc : {fset valType}).
+
 Section Vars.
-Context {varType : choiceType} {valType : monoidType} {op : Type}.
-Context {loc : {fset valType}}.
 
 Abbreviation expr := (expr varType valType op).
 Abbreviation com := (com varType valType op).
@@ -101,8 +103,7 @@ Reserved Notation "⟦ P ⟧ c ⟦ ε ↑ Q ⟧" (at level 0, P custom ss at lev
   c custom hcom at level 99, ε at level 0, Q custom ss at level 99).
 
 Section Rules.
-Context (varType : choiceType) (valType : monoidType) (loc : {fset valType}).
-Context (op : Type) {D : Denote op valType}.
+Context {D : Denote op valType}.
 
 Abbreviation expr := (expr varType valType op).
 Abbreviation com := (com varType valType op).
@@ -256,8 +257,7 @@ reachable from some state in the precondition, that is,
 *)
 
 Section Semantics.
-Context (varType : choiceType) (valType : monoidType) (loc : {fset valType}).
-Context (op : Type) {D : Denote op valType}.
+Context {D : Denote op valType}.
 
 (* Locations are values too so we need this hypothesis for rules such as LoadNull *)
 Hypothesis null_notin_loc : null valType ∉ loc.
@@ -447,3 +447,4 @@ Proof.
 Admitted.
 
 End Semantics.
+End SInc.
