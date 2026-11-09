@@ -1,5 +1,5 @@
 From mathcomp Require Import ssreflect ssrfun ssrbool eqtype choice ssrnat.
-From mathcomp Require Import ssralg ssrnum monoid order finmap finset.
+From mathcomp Require Import ssralg ssrnum monoid order finmap finset fintype finfun.
 
 From IncLogic Require Import State.
 
@@ -12,7 +12,7 @@ Notation "x ∈ A" := (x \in A) (at level 70, no associativity).
 Notation "x ∉ A" := (x \notin A) (at level 70, no associativity).
 
 Section SInc.
-Context (varType : choiceType) (valType : monoidType) (op : Type).
+Context (varType : finType) (valType : monoidType) (op : Type).
 Context (loc : {fset valType}).
 
 Section Vars.
@@ -72,7 +72,7 @@ Proof. by apply: contra; apply/fsubsetP/cmod_fv. Qed.
     variables if none of the variables in [vars] is mentioned in [P]. *)
 Definition indep (vars : {fset varType}) (p : sprop varType valType loc) : Prop :=
   forall (s s' : store varType valType) h,
-    (forall x, x ∉ vars -> s.[? x] = s'.[? x]) -> p s h -> p s' h.
+    (forall x, x ∉ vars -> s x = s' x) -> p s h -> p s' h.
 
 Lemma indep_sub vars1 vars2 p : vars1 `<=` vars2 -> indep vars2 p -> indep vars1 p.
 Proof.
